@@ -4,7 +4,7 @@ JDBC driver to query Oracle Cloud database
 
 ## Installation
 
-- Download the zip file [here](https://github.com/satyapadala/oracle-cloud-sql-driver/releases/download/v0.0.1/releaseArtifcats.zip)
+- Download the zip file [here](https://github.com/satyapadala/oracle-cloud-sql-driver/releases/download/v0.0.2/releaseArtifcats.zip)
 - Login to Oracle BI as BI Administrator and upload (unarchive) the file `OracleBICatalog/OracleCloudSQLQuery.catalog` to `/Custom` folder
 - Change the data source for the generated data model to your respective cloud data source
 - Download and install Db Visualizer [here](https://www.dbvis.com/download/)
