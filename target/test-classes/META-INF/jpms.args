@@ -1,4 +1,0 @@
---patch-module
-OFHSqlDriver=_
---add-reads
-OFHSqlDriver=ALL-UNNAMED
