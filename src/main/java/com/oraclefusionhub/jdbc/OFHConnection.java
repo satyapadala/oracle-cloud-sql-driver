@@ -34,14 +34,15 @@ public class OFHConnection implements java.sql.Connection {
 			}
 
 			String userpass = user + ":" + password;
-			String basicAuth = "Basic " + new String(Base64.getEncoder().encode(userpass.getBytes(StandardCharsets.UTF_8)));
+			String basicAuth = "Basic "
+					+ new String(Base64.getEncoder().encode(userpass.getBytes(StandardCharsets.UTF_8)));
 
 			this.fullURL = url + "/xmlpserver/services/ExternalReportWSSService";
 			this.basicAuth = basicAuth;
 
 		} catch (Exception ex) {
 			ex.printStackTrace();
-			throw new SQLException("Unable to create connection");
+			throw new SQLException("Unable to create connection: " + ex.getMessage());
 		}
 
 	}
@@ -157,7 +158,6 @@ public class OFHConnection implements java.sql.Connection {
 			public boolean nullsAreSortedAtStart() throws SQLException {
 				return false;
 			}
-
 
 			@Override
 			public boolean nullsAreSortedAtEnd() throws SQLException {
@@ -710,17 +710,20 @@ public class OFHConnection implements java.sql.Connection {
 			}
 
 			@Override
-			public ResultSet getProcedures(String catalog, String schemaPattern, String procedureNamePattern) throws SQLException {
+			public ResultSet getProcedures(String catalog, String schemaPattern, String procedureNamePattern)
+					throws SQLException {
 				return null;
 			}
 
 			@Override
-			public ResultSet getProcedureColumns(String catalog, String schemaPattern, String procedureNamePattern, String columnNamePattern) throws SQLException {
+			public ResultSet getProcedureColumns(String catalog, String schemaPattern, String procedureNamePattern,
+					String columnNamePattern) throws SQLException {
 				return null;
 			}
 
 			@Override
-			public ResultSet getTables(String catalog, String schemaPattern, String tableNamePattern, String[] types) throws SQLException {
+			public ResultSet getTables(String catalog, String schemaPattern, String tableNamePattern, String[] types)
+					throws SQLException {
 				return null;
 			}
 
@@ -740,22 +743,26 @@ public class OFHConnection implements java.sql.Connection {
 			}
 
 			@Override
-			public ResultSet getColumns(String catalog, String schemaPattern, String tableNamePattern, String columnNamePattern) throws SQLException {
+			public ResultSet getColumns(String catalog, String schemaPattern, String tableNamePattern,
+					String columnNamePattern) throws SQLException {
 				return null;
 			}
 
 			@Override
-			public ResultSet getColumnPrivileges(String catalog, String schema, String table, String columnNamePattern) throws SQLException {
+			public ResultSet getColumnPrivileges(String catalog, String schema, String table, String columnNamePattern)
+					throws SQLException {
 				return null;
 			}
 
 			@Override
-			public ResultSet getTablePrivileges(String catalog, String schemaPattern, String tableNamePattern) throws SQLException {
+			public ResultSet getTablePrivileges(String catalog, String schemaPattern, String tableNamePattern)
+					throws SQLException {
 				return null;
 			}
 
 			@Override
-			public ResultSet getBestRowIdentifier(String catalog, String schema, String table, int scope, boolean nullable) throws SQLException {
+			public ResultSet getBestRowIdentifier(String catalog, String schema, String table, int scope,
+					boolean nullable) throws SQLException {
 				return null;
 			}
 
@@ -780,7 +787,8 @@ public class OFHConnection implements java.sql.Connection {
 			}
 
 			@Override
-			public ResultSet getCrossReference(String parentCatalog, String parentSchema, String parentTable, String foreignCatalog, String foreignSchema, String foreignTable) throws SQLException {
+			public ResultSet getCrossReference(String parentCatalog, String parentSchema, String parentTable,
+					String foreignCatalog, String foreignSchema, String foreignTable) throws SQLException {
 				return null;
 			}
 
@@ -790,7 +798,8 @@ public class OFHConnection implements java.sql.Connection {
 			}
 
 			@Override
-			public ResultSet getIndexInfo(String catalog, String schema, String table, boolean unique, boolean approximate) throws SQLException {
+			public ResultSet getIndexInfo(String catalog, String schema, String table, boolean unique,
+					boolean approximate) throws SQLException {
 				return null;
 			}
 
@@ -855,7 +864,8 @@ public class OFHConnection implements java.sql.Connection {
 			}
 
 			@Override
-			public ResultSet getUDTs(String catalog, String schemaPattern, String typeNamePattern, int[] types) throws SQLException {
+			public ResultSet getUDTs(String catalog, String schemaPattern, String typeNamePattern, int[] types)
+					throws SQLException {
 				return null;
 			}
 
@@ -885,17 +895,20 @@ public class OFHConnection implements java.sql.Connection {
 			}
 
 			@Override
-			public ResultSet getSuperTypes(String catalog, String schemaPattern, String typeNamePattern) throws SQLException {
+			public ResultSet getSuperTypes(String catalog, String schemaPattern, String typeNamePattern)
+					throws SQLException {
 				return null;
 			}
 
 			@Override
-			public ResultSet getSuperTables(String catalog, String schemaPattern, String tableNamePattern) throws SQLException {
+			public ResultSet getSuperTables(String catalog, String schemaPattern, String tableNamePattern)
+					throws SQLException {
 				return null;
 			}
 
 			@Override
-			public ResultSet getAttributes(String catalog, String schemaPattern, String typeNamePattern, String attributeNamePattern) throws SQLException {
+			public ResultSet getAttributes(String catalog, String schemaPattern, String typeNamePattern,
+					String attributeNamePattern) throws SQLException {
 				return null;
 			}
 
@@ -970,17 +983,20 @@ public class OFHConnection implements java.sql.Connection {
 			}
 
 			@Override
-			public ResultSet getFunctions(String catalog, String schemaPattern, String functionNamePattern) throws SQLException {
+			public ResultSet getFunctions(String catalog, String schemaPattern, String functionNamePattern)
+					throws SQLException {
 				return null;
 			}
 
 			@Override
-			public ResultSet getFunctionColumns(String catalog, String schemaPattern, String functionNamePattern, String columnNamePattern) throws SQLException {
+			public ResultSet getFunctionColumns(String catalog, String schemaPattern, String functionNamePattern,
+					String columnNamePattern) throws SQLException {
 				return null;
 			}
 
 			@Override
-			public ResultSet getPseudoColumns(String catalog, String schemaPattern, String tableNamePattern, String columnNamePattern) throws SQLException {
+			public ResultSet getPseudoColumns(String catalog, String schemaPattern, String tableNamePattern,
+					String columnNamePattern) throws SQLException {
 				return null;
 			}
 
