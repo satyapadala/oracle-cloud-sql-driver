@@ -1,0 +1,14 @@
+<env:Envelope xmlns:env="http://www.w3.org/2003/05/soap-envelope">
+    <env:Header />
+    <env:Body>
+        <runReportResponse xmlns="http://xmlns.oracle.com/oxp/service/PublicReportService">
+            <runReportReturn xmlns="http://xmlns.oracle.com/oxp/service/PublicReportService">
+                <reportBytes xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmime:contentType="application/octet-stream" xmlns="http://xmlns.oracle.com/oxp/service/PublicReportService">77u/VEVTVDEsVEVTVDIKMjAyMi0xMS0xMlQwNzowMDoxNi4wMDArMDA6MDAsMjAyMi0xMS0xMlQwNzowMDoxNi4wMDArMDA6MDAK</reportBytes>
+                <reportContentType xmlns="http://xmlns.oracle.com/oxp/service/PublicReportService">text/plain;charset=UTF-8</reportContentType>
+                <reportFileID xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:nil="true" xmlns="http://xmlns.oracle.com/oxp/service/PublicReportService" />
+                <reportLocale xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:nil="true" xmlns="http://xmlns.oracle.com/oxp/service/PublicReportService" />
+                <metaDataList xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:nil="true" xmlns="http://xmlns.oracle.com/oxp/service/PublicReportService" />
+            </runReportReturn>
+        </runReportResponse>
+    </env:Body>
+</env:Envelope>
