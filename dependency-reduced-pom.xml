@@ -7,37 +7,6 @@
   <version>1.0-SNAPSHOT</version>
   <url>http://www.oraclefusionhub.com</url>
   <build>
-    <pluginManagement>
-      <plugins>
-        <plugin>
-          <artifactId>maven-clean-plugin</artifactId>
-        </plugin>
-        <plugin>
-          <artifactId>maven-resources-plugin</artifactId>
-        </plugin>
-        <plugin>
-          <artifactId>maven-compiler-plugin</artifactId>
-        </plugin>
-        <plugin>
-          <artifactId>maven-surefire-plugin</artifactId>
-        </plugin>
-        <plugin>
-          <artifactId>maven-jar-plugin</artifactId>
-        </plugin>
-        <plugin>
-          <artifactId>maven-install-plugin</artifactId>
-        </plugin>
-        <plugin>
-          <artifactId>maven-deploy-plugin</artifactId>
-        </plugin>
-        <plugin>
-          <artifactId>maven-site-plugin</artifactId>
-        </plugin>
-        <plugin>
-          <artifactId>maven-project-info-reports-plugin</artifactId>
-        </plugin>
-      </plugins>
-    </pluginManagement>
     <plugins>
       <plugin>
         <artifactId>maven-compiler-plugin</artifactId>
@@ -54,19 +23,10 @@
             <goals>
               <goal>compile</goal>
             </goals>
-            <configuration>
-              <excludes>
-                <exclude>module-info.java</exclude>
-              </excludes>
-            </configuration>
+            <configuration />
           </execution>
         </executions>
-        <configuration>
-          <jdkToolchain>
-            <version>11</version>
-          </jdkToolchain>
-          <release>11</release>
-        </configuration>
+        <configuration />
       </plugin>
       <plugin>
         <artifactId>maven-shade-plugin</artifactId>

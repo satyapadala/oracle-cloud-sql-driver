@@ -1,4 +1,3 @@
 /target/
 */target/**
-**/META-INF/
 !.mvn/wrapper/maven-wrapper.jar
