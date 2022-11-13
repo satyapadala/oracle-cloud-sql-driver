@@ -60,6 +60,8 @@ public class OFHDriverTest {
 		assertTrue("resultset should contain data", resultSet.next());
 
 		connection.close();
+
+		assertTrue("connection should be closed", connection.isClosed());
 	}
 
 }

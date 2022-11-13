@@ -15,8 +15,11 @@ public class OFHConnection implements java.sql.Connection {
 	private static final String reportPath = "/Custom/OracleCloudSQLQuery/SQLQuery.xdo";
 	private String fullURL;
 	private String basicAuth;
+	private Boolean closed;
 
 	public OFHConnection(String url, Properties properties) throws SQLException {
+
+		this.closed = false;
 
 		try {
 			String user;
@@ -109,11 +112,12 @@ public class OFHConnection implements java.sql.Connection {
 
 	@Override
 	public void close() throws SQLException {
+		this.closed = true;
 	}
 
 	@Override
 	public boolean isClosed() throws SQLException {
-		return false;
+		return this.closed;
 	}
 
 	@Override
