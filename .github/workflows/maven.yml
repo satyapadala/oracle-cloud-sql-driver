@@ -33,8 +33,8 @@ jobs:
     - name: Archive artifacts
       uses: actions/upload-artifact@v3
       with:
-        name: OFH
-        path: OFHSqlDriver
+        name: OFHSqlDriver
+        path: |
           target/*.jar
           !target/original-*.jar
 
