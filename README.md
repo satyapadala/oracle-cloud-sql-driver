@@ -47,6 +47,18 @@ https://github.com/user-attachments/assets/4afdc1b8-6ed8-4239-b795-92291a52ef03
 
 ---
 
+## ⚙️ Configuration Properties
+
+When configuring your connection, the driver exposes several custom properties that can be adjusted within your IDE's "Driver Properties" or "Connection Properties" tab:
+
+| Property | Default Value | Description |
+| :--- | :--- | :--- |
+| **`safetyGuard`** | `true` | **Recommended:** Blocks the execution of massive "blind" SQL queries that do not contain a `WHERE` clause, `ROWNUM` limiter, or `FETCH FIRST` statement. This prevents accidental memory exhaustion of the Oracle Cloud environment and your local JVM. Set to `false` to bypass. |
+| **`debug`** | `false` | Enables verbose diagnostic logging in the IDE console output. Useful for troubleshooting connection, parser, and schema extraction issues. |
+| **`reportPath`** | `/Custom/OracleCloudSQLQuery/SQLQuery.xdo` | The absolute path to the uploaded Oracle BI Publisher Custom Report Data Model. |
+
+---
+
 ## ⚠️ Caution & Limitations
 
 This driver is specifically engineered to improve developer velocity, schema exploration, and lightweight diagnostic data extraction. 
