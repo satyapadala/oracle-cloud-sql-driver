@@ -3,7 +3,7 @@
 A lightweight, robust JDBC driver designed explicitly to securely execute SQL queries against Oracle Cloud ERP / HCM environments without direct database-tier access. 
 
 ## 🚀 Key Features
-
+https://github.com/user-attachments/assets/4afdc1b8-6ed8-4239-b795-92291a52ef03
 
 * **Seamless JDBC Integration:** Run native SQL via any standard Java database querying tool. The driver seamlessly connects to your Oracle Cloud instance and effortlessly processes the complex data responses into standard JDBC `ResultSet` outputs.
 * **Offline Schema Metastore:** Comes bundled with a comprehensive metadata snapshot mapping over 4,000+ Oracle Financials Tables, Views, Columns, Primary Keys, and Descriptions natively to the JDBC Driver.
