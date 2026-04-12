@@ -1,6 +1,8 @@
 package com.oraclefusionhub.jdbc;
 
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.fail;
 
 import java.sql.Connection;
 import java.sql.Driver;
@@ -62,6 +64,101 @@ public class OFHDriverTest {
 		connection.close();
 
 		assertTrue("connection should be closed", connection.isClosed());
+	}
+
+	@Test
+	public void testSoapFaultMessage() {
+
+		mockXMLPServer.stubFor(WireMock.post(WireMock.urlEqualTo("/xmlpserver/services/ExternalReportWSSService"))
+				.willReturn(WireMock.aResponse().withStatus(200).withHeader("Content-Type", "text/xml")
+						.withBodyFile("E2ETestFault.xml")));
+
+		try (Connection connection = DriverManager.getConnection("jdbc:ofh://http://localhost:8089", "testUser",
+				"testPassword");
+				Statement statement = connection.createStatement()) {
+			statement.executeQuery("select sysdate from dual");
+			fail("Expected SQLException");
+		} catch (SQLException e) {
+			assertEquals("Parsing Error: SOAP Fault: Invalid column type XMLTYPE for report output", e.getMessage());
+		}
+	}
+
+	@Test
+	public void testXmlRowsetResult() throws SQLException {
+
+		mockXMLPServer.stubFor(WireMock.post(WireMock.urlEqualTo("/xmlpserver/services/ExternalReportWSSService"))
+				.willReturn(WireMock.aResponse().withStatus(200).withHeader("Content-Type", "text/xml")
+						.withBodyFile("E2ETestXmlResult.xml")));
+
+		try (Connection connection = DriverManager.getConnection("jdbc:ofh://http://localhost:8089", "testUser",
+				"testPassword");
+				Statement statement = connection.createStatement();
+				ResultSet resultSet = statement.executeQuery("select sysdate from dual")) {
+			assertTrue("resultset should contain xml-derived row", resultSet.next());
+			assertEquals("SYSDATE", resultSet.getMetaData().getColumnLabel(1));
+			assertEquals("2026-04-12", resultSet.getString(1));
+			assertEquals("2026-04-12", resultSet.getString("SYSDATE"));
+		}
+	}
+
+	@Test
+	public void testWrappedXmlRowsetResult() throws SQLException {
+
+		mockXMLPServer.stubFor(WireMock.post(WireMock.urlEqualTo("/xmlpserver/services/ExternalReportWSSService"))
+				.willReturn(WireMock.aResponse().withStatus(200).withHeader("Content-Type", "text/xml")
+						.withBodyFile("E2ETestWrappedXmlResult.xml")));
+
+		try (Connection connection = DriverManager.getConnection("jdbc:ofh://http://localhost:8089", "testUser",
+				"testPassword");
+				Statement statement = connection.createStatement();
+				ResultSet resultSet = statement.executeQuery("select sysdate from dual")) {
+			assertTrue("resultset should contain wrapped xml-derived row", resultSet.next());
+			assertEquals("SYSDATE", resultSet.getMetaData().getColumnLabel(1));
+			assertEquals("2026-04-12", resultSet.getString(1));
+		}
+	}
+
+	@Test
+	public void testWrappedXmlRowsetRespectsMaxRows() throws SQLException {
+
+		mockXMLPServer.stubFor(WireMock.post(WireMock.urlEqualTo("/xmlpserver/services/ExternalReportWSSService"))
+				.willReturn(WireMock.aResponse().withStatus(200).withHeader("Content-Type", "text/xml")
+						.withBodyFile("E2ETestWrappedXmlResult.xml")));
+
+		try (Connection connection = DriverManager.getConnection("jdbc:ofh://http://localhost:8089", "testUser",
+				"testPassword")) {
+			Statement fullStatement = connection.createStatement();
+			fullStatement.setMaxRows(0);
+			ResultSet fullResultSet = fullStatement.executeQuery("select sysdate from dual");
+			assertTrue(fullResultSet.next());
+			assertEquals(false, fullResultSet.next());
+			fullResultSet.close();
+			fullStatement.close();
+
+			Statement limitedStatement = connection.createStatement();
+			limitedStatement.setMaxRows(1);
+			ResultSet limitedResultSet = limitedStatement.executeQuery("select sysdate from dual");
+			assertTrue(limitedResultSet.next());
+			assertEquals(false, limitedResultSet.next());
+			limitedResultSet.close();
+			limitedStatement.close();
+		}
+	}
+
+	@Test
+	public void testEmptyWrappedXmlResult() throws SQLException {
+
+		mockXMLPServer.stubFor(WireMock.post(WireMock.urlEqualTo("/xmlpserver/services/ExternalReportWSSService"))
+				.willReturn(WireMock.aResponse().withStatus(200).withHeader("Content-Type", "text/xml")
+						.withBodyFile("E2ETestEmptyWrappedResult.xml")));
+
+		try (Connection connection = DriverManager.getConnection("jdbc:ofh://http://localhost:8089", "testUser",
+				"testPassword");
+				Statement statement = connection.createStatement();
+				ResultSet resultSet = statement.executeQuery("select sysdate from dual")) {
+			assertEquals(0, resultSet.getMetaData().getColumnCount());
+			assertEquals(false, resultSet.next());
+		}
 	}
 
 }

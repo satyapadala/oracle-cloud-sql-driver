@@ -29,7 +29,6 @@ public class OFHDriver implements Driver {
 
 	@Override
 	public Connection connect(String url, Properties properties) throws SQLException {
-		System.out.println("Props: " + properties);
 		url = getURL(url);
 
 		return new OFHConnection(url, properties);
@@ -49,8 +48,12 @@ public class OFHDriver implements Driver {
 	@Override
 	public DriverPropertyInfo[] getPropertyInfo(String s, Properties properties) throws SQLException {
 		DriverPropertyInfo reportPathProp = new DriverPropertyInfo("reportPath", "/Custom/OracleCloudSQLQuery/SQLQuery.xdo");
-		DriverPropertyInfo[] dpi = new DriverPropertyInfo[1];
+		DriverPropertyInfo debugProp = new DriverPropertyInfo("debug", "false");
+		debugProp.description = "Enable verbose driver debug logging";
+		debugProp.choices = new String[] { "true", "false" };
+		DriverPropertyInfo[] dpi = new DriverPropertyInfo[2];
 		dpi[0] = reportPathProp;
+		dpi[1] = debugProp;
 
 		return  dpi;
 	}

@@ -21,40 +21,78 @@ import java.sql.SQLXML;
 import java.sql.Statement;
 import java.sql.Time;
 import java.sql.Timestamp;
+import java.sql.Types;
 import java.util.*;
 
 public class OFHResultSet implements ResultSet {
-	private final Iterator<CSVRecord> iterator;
-	private CSVRecord record = null;
-	private final CSVRecord header;
+	private final List<String> header;
+	private final List<List<String>> rows;
+	private final Map<String, Integer> columnIndexByName;
+	private int currentRowIndex = -1;
+	private List<String> record = null;
+	private boolean closed = false;
+	private boolean lastWasNull = false;
 
 	public OFHResultSet(Iterable<CSVRecord> s) {
-		this.iterator = s.iterator();
-		this.header = this.iterator.next();
+		Iterator<CSVRecord> iterator = s.iterator();
+		this.header = new ArrayList<>();
+		this.rows = new ArrayList<>();
+		if (iterator.hasNext()) {
+			CSVRecord headerRecord = iterator.next();
+			for (String value : headerRecord) {
+				this.header.add(value);
+			}
+
+			while (iterator.hasNext()) {
+				CSVRecord csvRecord = iterator.next();
+				List<String> row = new ArrayList<>();
+				for (String value : csvRecord) {
+					row.add(value);
+				}
+				this.rows.add(row);
+			}
+		}
+
+		this.columnIndexByName = createColumnIndex(this.header);
+	}
+
+	public OFHResultSet(List<String> header, List<List<String>> rows) {
+		this.header = new ArrayList<>(header);
+		this.rows = new ArrayList<>();
+		for (List<String> row : rows) {
+			this.rows.add(new ArrayList<>(row));
+		}
+		this.columnIndexByName = createColumnIndex(this.header);
 	}
 	@Override
 	public boolean next() throws SQLException {
-		boolean retVal = iterator.hasNext();
-
-		if (iterator.hasNext()) {
-			//record = List.of(iterator.next().split(FIELD_SEPARATOR, -1));
-			record = iterator.next();
+		ensureOpen();
+		if (currentRowIndex + 1 < rows.size()) {
+			currentRowIndex++;
+			record = rows.get(currentRowIndex);
+			return true;
 		}
-		return retVal;
-	}
-
-	@Override
-	public void close() throws SQLException {
-	}
-
-	@Override
-	public boolean wasNull() throws SQLException {
+		record = null;
+		currentRowIndex = rows.size();
+		lastWasNull = false;
 		return false;
 	}
 
 	@Override
+	public void close() throws SQLException {
+		closed = true;
+		record = null;
+	}
+
+	@Override
+	public boolean wasNull() throws SQLException {
+		ensureOpen();
+		return lastWasNull;
+	}
+
+	@Override
 	public String getString(int i) throws SQLException {
-		return record.get(i-1);
+		return getValue(i);
 	}
 
 	@Override
@@ -134,7 +172,7 @@ public class OFHResultSet implements ResultSet {
 
 	@Override
 	public String getString(String s) throws SQLException {
-		return null;
+		return getString(findColumn(s));
 	}
 
 	@Override
@@ -229,6 +267,7 @@ public class OFHResultSet implements ResultSet {
 
 	@Override
 	public ResultSetMetaData getMetaData() throws SQLException {
+		ensureOpen();
 		return new ResultSetMetaData() {
 			@Override
 			public int getColumnCount() throws SQLException {
@@ -272,6 +311,7 @@ public class OFHResultSet implements ResultSet {
 
 			@Override
 			public String getColumnLabel(int column) throws SQLException {
+				validateColumnIndex(column);
 				return header.get(column - 1);
 			}
 
@@ -307,12 +347,14 @@ public class OFHResultSet implements ResultSet {
 
 			@Override
 			public int getColumnType(int column) throws SQLException {
-				return 0;
+				validateColumnIndex(column);
+				return Types.VARCHAR;
 			}
 
 			@Override
 			public String getColumnTypeName(int column) throws SQLException {
-				return null;
+				validateColumnIndex(column);
+				return "VARCHAR";
 			}
 
 			@Override
@@ -332,7 +374,8 @@ public class OFHResultSet implements ResultSet {
 
 			@Override
 			public String getColumnClassName(int column) throws SQLException {
-				return null;
+				validateColumnIndex(column);
+				return String.class.getName();
 			}
 
 			@Override
@@ -349,17 +392,22 @@ public class OFHResultSet implements ResultSet {
 
 	@Override
 	public Object getObject(int i) throws SQLException {
-		return null;
+		return getString(i);
 	}
 
 	@Override
 	public Object getObject(String s) throws SQLException {
-		return null;
+		return getString(s);
 	}
 
 	@Override
 	public int findColumn(String s) throws SQLException {
-		return 2;
+		ensureOpen();
+		Integer index = columnIndexByName.get(s);
+		if (index == null) {
+			throw new SQLException("Column not found: " + s);
+		}
+		return index + 1;
 	}
 
 	@Override
@@ -384,47 +432,76 @@ public class OFHResultSet implements ResultSet {
 
 	@Override
 	public boolean isBeforeFirst() throws SQLException {
-		return false;
+		ensureOpen();
+		return currentRowIndex < 0 && !rows.isEmpty();
 	}
 
 	@Override
 	public boolean isAfterLast() throws SQLException {
-		return false;
+		ensureOpen();
+		return currentRowIndex >= rows.size() && !rows.isEmpty();
 	}
 
 	@Override
 	public boolean isFirst() throws SQLException {
-		return false;
+		ensureOpen();
+		return currentRowIndex == 0 && record != null;
 	}
 
 	@Override
 	public boolean isLast() throws SQLException {
-		return false;
+		ensureOpen();
+		return currentRowIndex == rows.size() - 1 && record != null;
 	}
 
 	@Override
 	public void beforeFirst() throws SQLException {
-
+		ensureOpen();
+		currentRowIndex = -1;
+		record = null;
+		lastWasNull = false;
 	}
 
 	@Override
 	public void afterLast() throws SQLException {
-
+		ensureOpen();
+		currentRowIndex = rows.size();
+		record = null;
+		lastWasNull = false;
 	}
 
 	@Override
 	public boolean first() throws SQLException {
-		return false;
+		ensureOpen();
+		if (rows.isEmpty()) {
+			record = null;
+			currentRowIndex = -1;
+			return false;
+		}
+		currentRowIndex = 0;
+		record = rows.get(currentRowIndex);
+		lastWasNull = false;
+		return true;
 	}
 
 	@Override
 	public boolean last() throws SQLException {
-		return false;
+		ensureOpen();
+		if (rows.isEmpty()) {
+			record = null;
+			currentRowIndex = -1;
+			return false;
+		}
+		currentRowIndex = rows.size() - 1;
+		record = rows.get(currentRowIndex);
+		lastWasNull = false;
+		return true;
 	}
 
 	@Override
 	public int getRow() throws SQLException {
-		return 0;
+		ensureOpen();
+		return record == null ? 0 : currentRowIndex + 1;
 	}
 
 	@Override
@@ -440,6 +517,45 @@ public class OFHResultSet implements ResultSet {
 	@Override
 	public boolean previous() throws SQLException {
 		return false;
+	}
+
+	private Map<String, Integer> createColumnIndex(List<String> columns) {
+		Map<String, Integer> indexByName = new LinkedHashMap<>();
+		for (int i = 0; i < columns.size(); i++) {
+			indexByName.put(columns.get(i), i);
+		}
+		return indexByName;
+	}
+
+	private String getValue(int columnIndex) throws SQLException {
+		ensureOpen();
+		if (record == null) {
+			throw new SQLException("Cursor not positioned on a row");
+		}
+
+		validateColumnIndex(columnIndex);
+		int zeroBasedIndex = columnIndex - 1;
+
+		if (zeroBasedIndex >= record.size()) {
+			lastWasNull = true;
+			return null;
+		}
+
+		String value = record.get(zeroBasedIndex);
+		lastWasNull = value == null;
+		return value;
+	}
+
+	private void validateColumnIndex(int columnIndex) throws SQLException {
+		if (columnIndex < 1 || columnIndex > header.size()) {
+			throw new SQLException("Invalid column index: " + columnIndex);
+		}
+	}
+
+	private void ensureOpen() throws SQLException {
+		if (closed) {
+			throw new SQLException("ResultSet is closed");
+		}
 	}
 
 	@Override
@@ -869,13 +985,12 @@ public class OFHResultSet implements ResultSet {
 
 	@Override
 	public int getHoldability() throws SQLException {
-		return 0;
+		return ResultSet.HOLD_CURSORS_OVER_COMMIT;
 	}
 
 	@Override
 	public boolean isClosed() throws SQLException {
-		System.out.println("isClosed::");
-		return false;
+		return closed;
 	}
 
 	@Override
@@ -1090,12 +1205,12 @@ public class OFHResultSet implements ResultSet {
 
 	@Override
 	public <T> T getObject(int i, Class<T> aClass) throws SQLException {
-		return null;
+		return aClass.cast(getObject(i));
 	}
 
 	@Override
 	public <T> T getObject(String s, Class<T> aClass) throws SQLException {
-		return null;
+		return aClass.cast(getObject(s));
 	}
 
 	@Override
