@@ -104,8 +104,20 @@ public class OFHStatement implements Statement {
 				try {
 					DocumentBuilder builder = factory.newDocumentBuilder();
 					Document doc = builder.parse(new InputSource(new StringReader(errorResponse.toString())));
-					errorResponseReason = doc.getElementsByTagName("env:Envelope").item(0).getChildNodes().item(1)
-							.getChildNodes().item(0).getChildNodes().item(1).getChildNodes().item(0).getTextContent();
+					
+					Node envelope = findFirstChild(doc, "Envelope");
+					if (envelope != null) {
+					    Node body = findFirstChild(envelope, "Body");
+					    if (body != null) {
+					        Node fault = findFirstChild(body, "Fault");
+					        if (fault != null) {
+					            errorResponseReason = extractSoapFaultReason(fault);
+					        }
+					    }
+					}
+					if (errorResponseReason == null) {
+					    errorResponseReason = "Unknown error: " + errorResponse.toString();
+					}
 
 				} catch (ParserConfigurationException e) {
 					throw new SQLException("Parsing Error: " + e.getMessage());
