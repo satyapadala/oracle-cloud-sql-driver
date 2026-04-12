@@ -4,6 +4,7 @@ A lightweight, robust JDBC driver designed explicitly to securely execute SQL qu
 
 ## 🚀 Key Features
 
+
 * **Seamless JDBC Integration:** Run native SQL via any standard Java database querying tool. The driver seamlessly connects to your Oracle Cloud instance and effortlessly processes the complex data responses into standard JDBC `ResultSet` outputs.
 * **Offline Schema Metastore:** Comes bundled with a comprehensive metadata snapshot mapping over 4,000+ Oracle Financials Tables, Views, Columns, Primary Keys, and Descriptions natively to the JDBC Driver.
 * **IDE Autosuggestions:** Because of the bundled metastore, tools like DBeaver, DataGrip, or DbVisualizer will offer lightning-fast, highly accurate intellisense and schema autosuggestions—without ever burning an API call to Oracle.
