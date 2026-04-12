@@ -15,21 +15,30 @@ import java.net.HttpURLConnection;
 import java.nio.charset.StandardCharsets;
 import java.sql.*;
 import java.text.MessageFormat;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.zip.GZIPInputStream;
 
 import org.apache.commons.csv.CSVRecord;
 
 public class OFHStatement implements Statement {
 	private final HttpURLConnection httpURLConnection;
 	private final String payload;
+	private final boolean debugEnabled;
 	private ResultSet rs;
 	private final String reportPath;
+	private int maxRows = 0;
 
-	OFHStatement(HttpURLConnection connection, String reportPath) {
+	OFHStatement(HttpURLConnection connection, String reportPath, boolean debugEnabled) {
 		this.httpURLConnection = connection;
 		this.reportPath = reportPath;
+		this.debugEnabled = debugEnabled;
 		this.payload = "<soap:Envelope xmlns:soap= \"http://www.w3.org/2003/05/soap-envelope\" xmlns:pub= \"http://xmlns.oracle.com/oxp/service/PublicReportService\">\n"
 				+
 				"    <soap:Body>\n" +
@@ -55,6 +64,7 @@ public class OFHStatement implements Statement {
 
 	@Override
 	public ResultSet executeQuery(String s) throws SQLException {
+		debug("OFHStatement.executeQuery SQL: " + s);
 		String query = encodeXML(s);
 		Object[] params = new Object[] { query, this.reportPath };
 		String finalPayload = MessageFormat.format(this.payload, params);
@@ -70,7 +80,7 @@ public class OFHStatement implements Statement {
 			os.close();
 			responseCode = conn.getResponseCode();
 		} catch (IOException e) {
-			System.out.println("error while getting outstream: " + e.getStackTrace());
+			debug("error while getting outstream: " + e.getStackTrace());
 		}
 
 		StringBuffer response = new StringBuffer();
@@ -78,8 +88,9 @@ public class OFHStatement implements Statement {
 		if (responseCode == HttpURLConnection.HTTP_OK) {
 			try {
 				getOutput(conn, response, responseCode);
+				debug("OFHStatement HTTP 200 response length: " + response.length());
 			} catch (IOException e) {
-				System.out.println("error while getting instream response: " + e.getStackTrace());
+				debug("error while getting instream response: " + e.getStackTrace());
 			}
 
 		} else {
@@ -87,7 +98,7 @@ public class OFHStatement implements Statement {
 			String errorResponseReason = null;
 			try {
 				getOutput(conn, errorResponse, responseCode);
-				System.out.println("Error Response: " + errorResponse.toString());
+				debug("Error Response: " + errorResponse.toString());
 
 				DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
 				try {
@@ -111,13 +122,15 @@ public class OFHStatement implements Statement {
 		}
 		conn.disconnect();
 
-		String responseCsv = null;
+		String responseContent = null;
 
 		DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
 		try {
 			DocumentBuilder builder = factory.newDocumentBuilder();
 			Document doc = builder.parse(new InputSource(new StringReader(response.toString())));
-			responseCsv = getResponseCSVString(doc);
+			responseContent = getResponseContentString(doc);
+		} catch (RuntimeException e) {
+			throw new SQLException("Parsing Error: " + e.getMessage(), e);
 		} catch (ParserConfigurationException e) {
 			throw new SQLException("Parsing Error: " + e.getMessage());
 		} catch (IOException e) {
@@ -126,110 +139,354 @@ public class OFHStatement implements Statement {
 			throw new SQLException("Parsing Error: " + e.getMessage());
 		}
 
-		Iterable<CSVRecord> records;
-
-		try {
-			records = CSVFormat.DEFAULT.parse(new StringReader(responseCsv));
-		} catch (IOException e) {
-			throw new SQLException("CSV Parsing Error: " + e.getMessage());
-		}
-		return new OFHResultSet(records);
+		return buildResultSet(responseContent);
 
 	}
 
-	private String getResponseCSVString(Document doc) {
+	private String getResponseContentString(Document doc) {
 		String base64Content = getContentDataFromDoc(doc);
+		debug("OFHStatement reportBytes base64 length: " + base64Content.length());
 
 		byte[] decodedBytes = Base64.getDecoder().decode(base64Content);
+		debug("OFHStatement decoded payload bytes: " + decodedBytes.length);
 
-		String responseCsv = new String(decodedBytes);
+		String decodedContent = new String(decodedBytes, StandardCharsets.UTF_8);
+		debug("OFHStatement decoded payload preview: " + preview(decodedContent));
+		return decodedContent;
+	}
 
-		return responseCsv;
+	private ResultSet buildResultSet(String responseContent) throws SQLException {
+		String trimmedContent = stripBom(responseContent == null ? "" : responseContent).trim();
+		debug("OFHStatement trimmed payload preview: " + preview(trimmedContent));
+		if (trimmedContent.startsWith("<")) {
+			return buildXmlPayloadResultSet(trimmedContent);
+		}
+
+		return buildCsvResultSet(responseContent);
+	}
+
+	private ResultSet buildXmlPayloadResultSet(String xmlContent) throws SQLException {
+		try {
+			String embeddedRowset = extractEmbeddedRowsetFromPayload(xmlContent);
+			if (embeddedRowset != null) {
+				debug("OFHStatement parser branch: embedded XML ROWSET");
+				return buildXmlResultSet(parseXmlDocument(embeddedRowset));
+			}
+
+			Document xmlResult = parseXmlDocument(xmlContent);
+			Node rootNode = xmlResult.getDocumentElement();
+			String rootName = rootNode == null ? "null" : rootNode.getNodeName();
+			debug("OFHStatement payload XML root: " + rootName);
+
+			if (matchesNodeName(rootNode, "ROWSET")) {
+				debug("OFHStatement parser branch: XML ROWSET");
+				return buildXmlResultSet(xmlResult);
+			}
+
+			if (matchesNodeName(rootNode, "DATA_DS")) {
+				embeddedRowset = extractEmbeddedRowset(rootNode);
+				if (embeddedRowset != null) {
+					debug("OFHStatement parser branch: embedded XML ROWSET");
+					return buildXmlResultSet(parseXmlDocument(embeddedRowset));
+				}
+
+				if (isEmptyDataSet(rootNode)) {
+					debug("OFHStatement parser branch: empty DATA_DS result");
+					return emptyResultSet();
+				}
+			}
+
+			throw new SQLException("Unsupported XML payload root: " + rootName);
+		} catch (ParserConfigurationException | SAXException | IOException e) {
+			throw new SQLException("XML Result Parsing Error: " + e.getMessage(), e);
+		}
+	}
+
+	private String extractEmbeddedRowsetFromPayload(String xmlContent) {
+		String normalizedContent = stripBom(xmlContent);
+		if (normalizedContent == null || !normalizedContent.contains("<RESULT>")) {
+			return null;
+		}
+
+		int resultStart = normalizedContent.indexOf("<RESULT>");
+		int resultEnd = normalizedContent.indexOf("</RESULT>", resultStart);
+		if (resultStart < 0 || resultEnd < 0) {
+			return null;
+		}
+
+		String escapedRowset = normalizedContent.substring(resultStart + "<RESULT>".length(), resultEnd);
+		String unescapedRowset = unescapeXml(escapedRowset).trim();
+		if (unescapedRowset.startsWith("<ROWSET") && unescapedRowset.endsWith("</ROWSET>")) {
+			debug("OFHStatement embedded ROWSET preview: " + preview(unescapedRowset));
+			return unescapedRowset;
+		}
+
+		return null;
+	}
+
+	private ResultSet buildCsvResultSet(String responseContent) throws SQLException {
+		try {
+			Iterable<CSVRecord> parsedRecords = CSVFormat.DEFAULT.parse(new StringReader(responseContent));
+			List<CSVRecord> records = new ArrayList<>();
+			for (CSVRecord record : parsedRecords) {
+				records.add(record);
+			}
+
+			if (records.isEmpty()) {
+				debug("OFHStatement CSV parser found no records");
+				return emptyResultSet();
+			}
+
+			CSVRecord header = records.get(0);
+			debug("OFHStatement parser branch: CSV. Header columns: " + header.size() + " -> " + header);
+			if (records.size() > 1) {
+				CSVRecord firstRow = records.get(1);
+				debug("OFHStatement CSV first row columns: " + firstRow.size() + " preview: " + preview(firstRow.toString()));
+			} else {
+				debug("OFHStatement CSV has header only");
+			}
+
+			if (maxRows > 0 && records.size() > maxRows + 1) {
+				debug("OFHStatement applying maxRows to CSV result: " + maxRows);
+				records = new ArrayList<>(records.subList(0, maxRows + 1));
+			}
+
+			return new OFHResultSet(records);
+		} catch (IOException e) {
+			throw new SQLException("CSV Parsing Error: " + e.getMessage());
+		}
+	}
+
+	private Document parseXmlDocument(String xmlContent) throws ParserConfigurationException, IOException, SAXException {
+		DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+		DocumentBuilder builder = factory.newDocumentBuilder();
+		return builder.parse(new InputSource(new StringReader(xmlContent)));
+	}
+
+	private ResultSet buildXmlResultSet(Document xmlResult) {
+		NodeList rowNodes = xmlResult.getDocumentElement().getChildNodes();
+		List<String> headers = new ArrayList<>();
+		LinkedHashSet<String> headerNames = new LinkedHashSet<>();
+		List<List<String>> rows = new ArrayList<>();
+
+		for (Node rowNode : iterable(rowNodes)) {
+			if (!matchesNodeName(rowNode, "ROW")) {
+				continue;
+			}
+
+			Map<String, String> rowValues = new LinkedHashMap<>();
+			for (Node columnNode : iterable(rowNode.getChildNodes())) {
+				if (columnNode.getNodeType() != Node.ELEMENT_NODE) {
+					continue;
+				}
+
+				String columnName = columnNode.getNodeName();
+				if (headerNames.add(columnName)) {
+					headers.add(columnName);
+				}
+				rowValues.put(columnName, columnNode.getTextContent());
+			}
+
+			List<String> row = new ArrayList<>();
+			for (String header : headers) {
+				row.add(rowValues.get(header));
+			}
+			rows.add(row);
+		}
+
+		debug("OFHStatement XML ROWSET parsed rows: " + rows.size() + " columns: " + headers.size() + " headers: " + headers);
+
+		if (maxRows > 0 && rows.size() > maxRows) {
+			debug("OFHStatement applying maxRows to XML result: " + maxRows);
+			rows = new ArrayList<>(rows.subList(0, maxRows));
+		}
+
+		return new OFHResultSet(headers, rows);
+	}
+
+	private String extractEmbeddedRowset(Node node) {
+		if (node == null) {
+			return null;
+		}
+
+		String textContent = stripBom(node.getTextContent());
+		if (textContent != null) {
+			String unescapedText = unescapeXml(textContent).trim();
+			if (unescapedText.startsWith("<ROWSET") && unescapedText.endsWith("</ROWSET>")) {
+				debug("OFHStatement embedded ROWSET preview: " + preview(unescapedText));
+				return unescapedText;
+			}
+		}
+
+		for (Node childNode : iterable(node.getChildNodes())) {
+			String embeddedRowset = extractEmbeddedRowset(childNode);
+			if (embeddedRowset != null) {
+				return embeddedRowset;
+			}
+		}
+
+		return null;
+	}
+
+	private String unescapeXml(String value) {
+		return value
+				.replace("&lt;", "<")
+				.replace("&gt;", ">")
+				.replace("&quot;", "\"")
+				.replace("&apos;", "'")
+				.replace("&amp;", "&");
+	}
+
+	private String stripBom(String value) {
+		if (value == null) {
+			return null;
+		}
+		if (!value.isEmpty() && value.charAt(0) == '\ufeff') {
+			return value.substring(1);
+		}
+		return value;
+	}
+
+	private boolean isEmptyDataSet(Node node) {
+		if (node == null || !matchesNodeName(node, "DATA_DS")) {
+			return false;
+		}
+
+		return !hasNestedElementWithText(node);
+	}
+
+	private boolean hasNestedElementWithText(Node node) {
+		for (Node childNode : iterable(node.getChildNodes())) {
+			if (childNode.getNodeType() != Node.ELEMENT_NODE) {
+				continue;
+			}
+
+			String textContent = stripBom(childNode.getTextContent());
+			if (textContent != null && !textContent.trim().isEmpty()) {
+				return true;
+			}
+
+			if (hasNestedElementWithText(childNode)) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private ResultSet emptyResultSet() {
+		return new OFHResultSet(new ArrayList<>(), new ArrayList<>());
+	}
+
+	private String preview(String value) {
+		if (value == null) {
+			return "null";
+		}
+
+		String normalized = value
+				.replace("\ufeff", "\\uFEFF")
+				.replace("\r", "\\r")
+				.replace("\n", "\\n");
+
+		int maxLength = 240;
+		if (normalized.length() <= maxLength) {
+			return normalized;
+		}
+
+		return normalized.substring(0, maxLength) + "...";
+	}
+
+	private void debug(String message) {
+		if (debugEnabled) {
+			System.out.println(message);
+		}
 	}
 
 	private String getContentDataFromDoc(Document doc) {
 
-		NodeList envelopeNodeList = doc.getElementsByTagName("env:Envelope");
+		Node envelope = findFirstChild(doc, "Envelope");
 
-		if (envelopeNodeList.getLength() == 0) {
+		if (envelope == null) {
 			throw new RuntimeException("No Envelope found");
 		}
 
-		Node envelope = envelopeNodeList.item(0);
-
-		NodeList envelopeChildNodeList = envelope.getChildNodes();
-
-		if (envelopeChildNodeList.getLength() == 0) {
-			throw new RuntimeException("No Envelope child nodes found");
-		}
-
-		Node body = null;
-
-		for (Node node : iterable(envelopeChildNodeList)) {
-			if (node.getNodeName().equals("env:Body")) {
-				body = node;
-				break;
-			}
-		}
+		Node body = findFirstChild(envelope, "Body");
 
 		if (body == null) {
 			throw new RuntimeException("No Body found");
 		}
 
-		if (body.getChildNodes().getLength() == 0) {
-			throw new RuntimeException("No Body child nodes found");
+		Node fault = findFirstChild(body, "Fault");
+
+		if (fault != null) {
+			String faultReason = extractSoapFaultReason(fault);
+			throw new RuntimeException("SOAP Fault: " + faultReason);
 		}
 
-		Node runReportResponse = null;
-
-		for (Node node : iterable(body.getChildNodes())) {
-			if (node.getNodeName().equals("runReportResponse")) {
-				runReportResponse = node;
-				break;
-			}
-		}
+		Node runReportResponse = findFirstChild(body, "runReportResponse");
 
 		if (runReportResponse == null) {
 			throw new RuntimeException("No runReportResponse found");
 		}
 
-		if (runReportResponse.getChildNodes().getLength() == 0) {
-			throw new RuntimeException("No runReportResponse child nodes found");
-		}
-
-		Node runReportReturn = null;
-
-		for (Node node : iterable(runReportResponse.getChildNodes())) {
-			if (node.getNodeName().equals("runReportReturn")) {
-				runReportReturn = node;
-				break;
-			}
-		}
+		Node runReportReturn = findFirstChild(runReportResponse, "runReportReturn");
 
 		if (runReportReturn == null) {
 			throw new RuntimeException("No runReportReturn found");
 		}
 
-		if (runReportReturn.getChildNodes().getLength() == 0) {
-			throw new RuntimeException("No runReportReturn child nodes found");
-		}
-
-		Node reportBytes = null;
-
-		for (Node node : iterable(runReportReturn.getChildNodes())) {
-			if (node.getNodeName().equals("reportBytes")) {
-				reportBytes = node;
-				break;
-			}
-		}
+		Node reportBytes = findFirstChild(runReportReturn, "reportBytes");
 
 		if (reportBytes == null) {
 			throw new RuntimeException("No reportBytes found");
 		}
 
-		String base64Content = reportBytes.getTextContent();
+		return reportBytes.getTextContent();
+	}
 
-		return base64Content;
+	private Node findFirstChild(Node parent, String nodeName) {
+		NodeList childNodes = parent.getChildNodes();
+		for (Node node : iterable(childNodes)) {
+			if (matchesNodeName(node, nodeName)) {
+				return node;
+			}
+		}
+		return null;
+	}
+
+	private boolean matchesNodeName(Node node, String expectedName) {
+		if (node == null) {
+			return false;
+		}
+
+		String localName = node.getLocalName();
+		if (expectedName.equals(localName)) {
+			return true;
+		}
+
+		String nodeName = node.getNodeName();
+		return expectedName.equals(nodeName) || nodeName.endsWith(":" + expectedName);
+	}
+
+	private String extractSoapFaultReason(Node fault) {
+		Node reason = findFirstChild(fault, "Reason");
+		if (reason != null) {
+			Node text = findFirstChild(reason, "Text");
+			if (text != null && text.getTextContent() != null && !text.getTextContent().isEmpty()) {
+				return text.getTextContent();
+			}
+		}
+
+		Node faultString = findFirstChild(fault, "faultstring");
+		if (faultString != null && faultString.getTextContent() != null && !faultString.getTextContent().isEmpty()) {
+			return faultString.getTextContent();
+		}
+
+		String fallback = fault.getTextContent();
+		if (fallback == null || fallback.isEmpty()) {
+			return "Unknown SOAP fault";
+		}
+		return fallback.trim();
 	}
 
 	public static Iterable<Node> iterable(final NodeList nodeList) {
@@ -259,14 +516,42 @@ public class OFHStatement implements Statement {
 		} else {
 			is = conn.getInputStream();
 		}
-		BufferedReader in = new BufferedReader(new InputStreamReader(is));
-		String inputLine;
 
-		while ((inputLine = in.readLine()) != null) {
-			response.append(inputLine);
+		if (is == null) {
+			return;
 		}
 
-		in.close();
+		byte[] responseBytes = readAllBytes(is);
+		byte[] decodedBytes = maybeDecompressResponse(conn, responseBytes);
+		response.append(new String(decodedBytes, StandardCharsets.UTF_8));
+		is.close();
+	}
+
+	private byte[] maybeDecompressResponse(HttpURLConnection conn, byte[] responseBytes) throws IOException {
+		String contentEncoding = conn.getContentEncoding();
+		boolean gzipEncoded = contentEncoding != null && contentEncoding.toLowerCase().contains("gzip");
+		boolean gzipMagic = responseBytes.length >= 2
+				&& (responseBytes[0] & 0xff) == 0x1f
+				&& (responseBytes[1] & 0xff) == 0x8b;
+
+		if (!gzipEncoded && !gzipMagic) {
+			return responseBytes;
+		}
+
+		debug("OFHStatement decompressing gzip response body");
+		try (GZIPInputStream gzipInputStream = new GZIPInputStream(new ByteArrayInputStream(responseBytes))) {
+			return readAllBytes(gzipInputStream);
+		}
+	}
+
+	private byte[] readAllBytes(InputStream inputStream) throws IOException {
+		ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+		byte[] buffer = new byte[8192];
+		int bytesRead;
+		while ((bytesRead = inputStream.read(buffer)) != -1) {
+			outputStream.write(buffer, 0, bytesRead);
+		}
+		return outputStream.toByteArray();
 	}
 
 	private static String encodeXML(CharSequence s) {
@@ -343,12 +628,15 @@ public class OFHStatement implements Statement {
 
 	@Override
 	public int getMaxRows() throws SQLException {
-		return 0;
+		return maxRows;
 	}
 
 	@Override
 	public void setMaxRows(int i) throws SQLException {
-
+		if (i < 0) {
+			throw new SQLException("maxRows cannot be negative");
+		}
+		this.maxRows = i;
 	}
 
 	@Override

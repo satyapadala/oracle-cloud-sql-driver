@@ -16,10 +16,12 @@ public class OFHConnection implements java.sql.Connection {
 	private String fullURL;
 	private String basicAuth;
 	private Boolean closed;
+	private final boolean debugEnabled;
 
 	public OFHConnection(String url, Properties properties) throws SQLException {
 
 		this.closed = false;
+		this.debugEnabled = isDebugEnabled(properties);
 
 		try {
 			String user;
@@ -71,12 +73,12 @@ public class OFHConnection implements java.sql.Connection {
 		conn.setRequestProperty("Content-Type", "application/soap+xml");
 		conn.setRequestProperty("SOAPAction", "runReport");
 		conn.setRequestProperty("Authorization", this.basicAuth);
-		return new OFHStatement(conn, reportPath);
+		return new OFHStatement(conn, reportPath, debugEnabled);
 	}
 
 	@Override
 	public PreparedStatement prepareStatement(String s) throws SQLException {
-		System.out.println("PrepareStatement: " + s);
+		debug("PrepareStatement: " + s);
 		return null;
 	}
 
@@ -1063,7 +1065,7 @@ public class OFHConnection implements java.sql.Connection {
 
 	@Override
 	public Statement createStatement(int i, int i1) throws SQLException {
-		return null;
+		return createStatement();
 	}
 
 	@Override
@@ -1117,7 +1119,7 @@ public class OFHConnection implements java.sql.Connection {
 
 	@Override
 	public Statement createStatement(int i, int i1, int i2) throws SQLException {
-		return null;
+		return createStatement();
 	}
 
 	@Override
@@ -1167,8 +1169,23 @@ public class OFHConnection implements java.sql.Connection {
 
 	@Override
 	public boolean isValid(int i) throws SQLException {
-		System.out.println("isvalid: " + i);
+		debug("isvalid: " + i);
 		return true;
+	}
+
+	private boolean isDebugEnabled(Properties properties) {
+		Object debugProperty = properties.get("debug");
+		if (debugProperty != null) {
+			return Boolean.parseBoolean(String.valueOf(debugProperty));
+		}
+
+		return Boolean.parseBoolean(System.getProperty("ofh.debug", "false"));
+	}
+
+	private void debug(String message) {
+		if (debugEnabled) {
+			System.out.println(message);
+		}
 	}
 
 	@Override
