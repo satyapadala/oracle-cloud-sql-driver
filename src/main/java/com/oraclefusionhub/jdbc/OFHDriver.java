@@ -51,9 +51,15 @@ public class OFHDriver implements Driver {
 		DriverPropertyInfo debugProp = new DriverPropertyInfo("debug", "false");
 		debugProp.description = "Enable verbose driver debug logging";
 		debugProp.choices = new String[] { "true", "false" };
-		DriverPropertyInfo[] dpi = new DriverPropertyInfo[2];
+
+		DriverPropertyInfo safetyGuardProp = new DriverPropertyInfo("safetyGuard", "true");
+		safetyGuardProp.description = "Enable safety guard against blind queries missing limiters.";
+		safetyGuardProp.choices = new String[] { "true", "false" };
+
+		DriverPropertyInfo[] dpi = new DriverPropertyInfo[3];
 		dpi[0] = reportPathProp;
 		dpi[1] = debugProp;
+		dpi[2] = safetyGuardProp;
 
 		return  dpi;
 	}

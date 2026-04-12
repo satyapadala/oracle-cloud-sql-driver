@@ -10,6 +10,7 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.Properties;
 
 import org.junit.AfterClass;
 import org.junit.Before;
@@ -57,13 +58,43 @@ public class OFHDriverTest {
 
 		Statement statement = connection.createStatement();
 
-		ResultSet resultSet = statement.executeQuery("select * from ofh_user");
+		ResultSet resultSet = statement.executeQuery("select * from ofh_user where rownum <= 100");
 
 		assertTrue("resultset should contain data", resultSet.next());
 
 		connection.close();
 
 		assertTrue("connection should be closed", connection.isClosed());
+	}
+
+	@Test
+	public void testSafetyGuardEnabled_RefusesBlindQuery() {
+		try (Connection connection = DriverManager.getConnection("jdbc:ofh://http://localhost:8089", "testUser", "testPassword");
+			 Statement statement = connection.createStatement()) {
+			statement.executeQuery("select * from ofh_user"); // Blind query with no limit
+			fail("Expected SQLException from SafetyGuard");
+		} catch (SQLException e) {
+			assertTrue("Should throw Safety Guard Exception", e.getMessage().contains("Safety Guard: Refusing to execute a massive blind query"));
+		}
+	}
+
+	@Test
+	public void testSafetyGuardDisabled_AllowsBlindQuery() throws SQLException {
+		
+		mockXMLPServer.stubFor(WireMock.post(WireMock.urlEqualTo("/xmlpserver/services/ExternalReportWSSService"))
+				.willReturn(WireMock.aResponse().withStatus(200).withHeader("Content-Type", "text/xml")
+						.withBodyFile("E2ETestResult.xml")));
+
+		Properties props = new Properties();
+		props.setProperty("user", "testUser");
+		props.setProperty("password", "testPassword");
+		props.setProperty("safetyGuard", "false");
+
+		try (Connection connection = DriverManager.getConnection("jdbc:ofh://http://localhost:8089", props);
+			 Statement statement = connection.createStatement()) {
+			ResultSet resultSet = statement.executeQuery("select * from ofh_user"); // Blind query but safety is OFF!
+			assertTrue("resultset should contain data", resultSet.next());
+		}
 	}
 
 	@Test

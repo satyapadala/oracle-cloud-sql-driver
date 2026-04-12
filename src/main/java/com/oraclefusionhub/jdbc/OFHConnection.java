@@ -17,11 +17,13 @@ public class OFHConnection implements java.sql.Connection {
 	private String basicAuth;
 	private Boolean closed;
 	private final boolean debugEnabled;
+	private final boolean safetyGuardEnabled;
 
 	public OFHConnection(String url, Properties properties) throws SQLException {
 
 		this.closed = false;
 		this.debugEnabled = isDebugEnabled(properties);
+		this.safetyGuardEnabled = isSafetyGuardEnabled(properties);
 
 		try {
 			String user;
@@ -73,7 +75,7 @@ public class OFHConnection implements java.sql.Connection {
 		conn.setRequestProperty("Content-Type", "application/soap+xml");
 		conn.setRequestProperty("SOAPAction", "runReport");
 		conn.setRequestProperty("Authorization", this.basicAuth);
-		return new OFHStatement(conn, reportPath, debugEnabled);
+		return new OFHStatement(conn, reportPath, debugEnabled, safetyGuardEnabled);
 	}
 
 	@Override
@@ -285,6 +287,15 @@ public class OFHConnection implements java.sql.Connection {
 		}
 
 		return Boolean.parseBoolean(System.getProperty("ofh.debug", "false"));
+	}
+
+	private boolean isSafetyGuardEnabled(Properties properties) {
+		Object safetyGuardProperty = properties.get("safetyGuard");
+		if (safetyGuardProperty != null) {
+			return Boolean.parseBoolean(String.valueOf(safetyGuardProperty));
+		}
+
+		return Boolean.parseBoolean(System.getProperty("ofh.safetyGuard", "true"));
 	}
 
 	private void debug(String message) {

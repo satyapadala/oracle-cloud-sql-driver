@@ -10,6 +10,10 @@ import org.xml.sax.SAXException;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
+import javax.xml.stream.XMLInputFactory;
+import javax.xml.stream.XMLStreamConstants;
+import javax.xml.stream.XMLStreamException;
+import javax.xml.stream.XMLStreamReader;
 import java.io.*;
 import java.net.HttpURLConnection;
 import java.nio.charset.StandardCharsets;
@@ -31,14 +35,16 @@ public class OFHStatement implements Statement {
 	private final HttpURLConnection httpURLConnection;
 	private final String payload;
 	private final boolean debugEnabled;
+	private final boolean safetyGuardEnabled;
 	private ResultSet rs;
 	private final String reportPath;
 	private int maxRows = 0;
 
-	OFHStatement(HttpURLConnection connection, String reportPath, boolean debugEnabled) {
+	OFHStatement(HttpURLConnection connection, String reportPath, boolean debugEnabled, boolean safetyGuardEnabled) {
 		this.httpURLConnection = connection;
 		this.reportPath = reportPath;
 		this.debugEnabled = debugEnabled;
+		this.safetyGuardEnabled = safetyGuardEnabled;
 		this.payload = "<soap:Envelope xmlns:soap= \"http://www.w3.org/2003/05/soap-envelope\" xmlns:pub= \"http://xmlns.oracle.com/oxp/service/PublicReportService\">\n"
 				+
 				"    <soap:Body>\n" +
@@ -64,6 +70,7 @@ public class OFHStatement implements Statement {
 
 	@Override
 	public ResultSet executeQuery(String s) throws SQLException {
+		checkQuerySafetyGuard(s);
 		debug("OFHStatement.executeQuery SQL: " + s);
 		String query = encodeXML(s);
 		Object[] params = new Object[] { query, this.reportPath };
@@ -71,6 +78,7 @@ public class OFHStatement implements Statement {
 
 		HttpURLConnection conn = this.httpURLConnection;
 		conn.setDoOutput(true);
+		conn.setRequestProperty("Accept-Encoding", "gzip");
 		OutputStream os = null;
 		int responseCode = 0;
 		try {
@@ -100,30 +108,12 @@ public class OFHStatement implements Statement {
 				getOutput(conn, errorResponse, responseCode);
 				debug("Error Response: " + errorResponse.toString());
 
-				DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
 				try {
-					DocumentBuilder builder = factory.newDocumentBuilder();
-					Document doc = builder.parse(new InputSource(new StringReader(errorResponse.toString())));
-					
-					Node envelope = findFirstChild(doc, "Envelope");
-					if (envelope != null) {
-					    Node body = findFirstChild(envelope, "Body");
-					    if (body != null) {
-					        Node fault = findFirstChild(body, "Fault");
-					        if (fault != null) {
-					            errorResponseReason = extractSoapFaultReason(fault);
-					        }
-					    }
-					}
+					errorResponseReason = extractSoapFaultReasonStax(errorResponse.toString());
 					if (errorResponseReason == null) {
 					    errorResponseReason = "Unknown error: " + errorResponse.toString();
 					}
-
-				} catch (ParserConfigurationException e) {
-					throw new SQLException("Parsing Error: " + e.getMessage());
-				} catch (IOException e) {
-					throw new SQLException("Parsing Error: " + e.getMessage());
-				} catch (SAXException e) {
+				} catch (XMLStreamException e) {
 					throw new SQLException("Parsing Error: " + e.getMessage());
 				}
 			} catch (IOException e) {
@@ -134,37 +124,142 @@ public class OFHStatement implements Statement {
 		}
 		conn.disconnect();
 
-		String responseContent = null;
-
-		DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+		String base64Content = null;
 		try {
-			DocumentBuilder builder = factory.newDocumentBuilder();
-			Document doc = builder.parse(new InputSource(new StringReader(response.toString())));
-			responseContent = getResponseContentString(doc);
-		} catch (RuntimeException e) {
+			base64Content = extractReportBytesStax(response.toString());
+		} catch (XMLStreamException | RuntimeException e) {
 			throw new SQLException("Parsing Error: " + e.getMessage(), e);
-		} catch (ParserConfigurationException e) {
-			throw new SQLException("Parsing Error: " + e.getMessage());
-		} catch (IOException e) {
-			throw new SQLException("Parsing Error: " + e.getMessage());
-		} catch (SAXException e) {
-			throw new SQLException("Parsing Error: " + e.getMessage());
 		}
 
-		return buildResultSet(responseContent);
-
-	}
-
-	private String getResponseContentString(Document doc) {
-		String base64Content = getContentDataFromDoc(doc);
 		debug("OFHStatement reportBytes base64 length: " + base64Content.length());
-
 		byte[] decodedBytes = Base64.getDecoder().decode(base64Content);
 		debug("OFHStatement decoded payload bytes: " + decodedBytes.length);
 
 		String decodedContent = new String(decodedBytes, StandardCharsets.UTF_8);
 		debug("OFHStatement decoded payload preview: " + preview(decodedContent));
-		return decodedContent;
+		
+		return buildResultSet(decodedContent);
+
+	}
+
+	private void checkQuerySafetyGuard(String sql) throws SQLException {
+		if (!this.safetyGuardEnabled) {
+			debug("Safety Guard is disabled. Proceeding with query.");
+			return;
+		}
+		
+		if (sql == null || sql.trim().isEmpty()) {
+			return;
+		}
+		
+		String upper = sql.toUpperCase();
+		
+		// Allow simple queries hitting DUAL
+		if (upper.contains(" FROM DUAL") || upper.contains(" FROM SYS.DUAL")) {
+			return;
+		}
+
+		if (!upper.contains("WHERE") && 
+			!upper.contains("ROWNUM") && 
+			!upper.contains("FETCH FIRST") && 
+			!upper.contains("LIMIT")) {
+			throw new SQLException("Safety Guard: Refusing to execute a massive blind query. " +
+					"Please explicitly include a 'WHERE' clause, 'ROWNUM' limiter, or 'FETCH FIRST x ROWS ONLY' " +
+					"to prevent Oracle Cloud extraction exhaustion.");
+		}
+	}
+
+	private String extractSoapFaultReasonStax(String xmlContent) throws XMLStreamException {
+		XMLInputFactory factory = XMLInputFactory.newInstance();
+		XMLStreamReader reader = factory.createXMLStreamReader(new StringReader(xmlContent));
+		StringBuilder faultReason = new StringBuilder();
+		boolean inFault = false;
+		boolean inReasonText = false;
+		boolean inFaultString = false;
+
+		while (reader.hasNext()) {
+			int streamEvent = reader.next();
+			if (streamEvent == XMLStreamConstants.START_ELEMENT) {
+				String localName = reader.getLocalName();
+				if ("Fault".equals(localName)) {
+					inFault = true;
+				} else if (inFault && "Text".equals(localName)) {
+					inReasonText = true;
+				} else if (inFault && "faultstring".equals(localName)) {
+					inFaultString = true;
+				}
+			} else if (streamEvent == XMLStreamConstants.CHARACTERS) {
+				if (inReasonText || inFaultString) {
+					faultReason.append(reader.getText());
+				}
+			} else if (streamEvent == XMLStreamConstants.END_ELEMENT) {
+				String localName = reader.getLocalName();
+				if ("Text".equals(localName)) {
+					inReasonText = false;
+				} else if ("faultstring".equals(localName)) {
+					inFaultString = false;
+				} else if ("Fault".equals(localName)) {
+					break;
+				}
+			}
+		}
+		String reason = faultReason.toString().trim();
+		return reason.isEmpty() ? null : reason;
+	}
+
+	private String extractReportBytesStax(String xmlContent) throws XMLStreamException {
+		XMLInputFactory factory = XMLInputFactory.newInstance();
+		XMLStreamReader reader = factory.createXMLStreamReader(new StringReader(xmlContent));
+		StringBuilder base64 = new StringBuilder();
+		boolean inReportBytes = false;
+
+		StringBuilder faultReason = null;
+		boolean inFault = false;
+		boolean inReasonText = false;
+		boolean inFaultString = false;
+
+		while (reader.hasNext()) {
+			int streamEvent = reader.next();
+			if (streamEvent == XMLStreamConstants.START_ELEMENT) {
+				String localName = reader.getLocalName();
+				if ("reportBytes".equals(localName)) {
+					inReportBytes = true;
+				} else if ("Fault".equals(localName)) {
+					inFault = true;
+					faultReason = new StringBuilder();
+				} else if (inFault && "Text".equals(localName)) {
+					inReasonText = true;
+				} else if (inFault && "faultstring".equals(localName)) {
+					inFaultString = true;
+				}
+			} else if (streamEvent == XMLStreamConstants.CHARACTERS) {
+				if (inReportBytes) {
+					base64.append(reader.getText());
+				} else if (inReasonText || inFaultString) {
+					faultReason.append(reader.getText());
+				}
+			} else if (streamEvent == XMLStreamConstants.END_ELEMENT) {
+				String localName = reader.getLocalName();
+				if ("reportBytes".equals(localName)) {
+					break;
+				} else if ("Text".equals(localName)) {
+					inReasonText = false;
+				} else if ("faultstring".equals(localName)) {
+					inFaultString = false;
+				} else if ("Fault".equals(localName)) {
+					if (faultReason != null && faultReason.length() > 0) {
+						throw new RuntimeException("SOAP Fault: " + faultReason.toString().trim());
+					} else {
+						throw new RuntimeException("SOAP Fault: Unknown SOAP fault");
+					}
+				}
+			}
+		}
+
+		if (base64.length() == 0) {
+			throw new RuntimeException("No reportBytes found or element is empty");
+		}
+		return base64.toString();
 	}
 
 	private ResultSet buildResultSet(String responseContent) throws SQLException {
@@ -178,40 +273,19 @@ public class OFHStatement implements Statement {
 	}
 
 	private ResultSet buildXmlPayloadResultSet(String xmlContent) throws SQLException {
-		try {
-			String embeddedRowset = extractEmbeddedRowsetFromPayload(xmlContent);
-			if (embeddedRowset != null) {
-				debug("OFHStatement parser branch: embedded XML ROWSET");
-				return buildXmlResultSet(parseXmlDocument(embeddedRowset));
-			}
-
-			Document xmlResult = parseXmlDocument(xmlContent);
-			Node rootNode = xmlResult.getDocumentElement();
-			String rootName = rootNode == null ? "null" : rootNode.getNodeName();
-			debug("OFHStatement payload XML root: " + rootName);
-
-			if (matchesNodeName(rootNode, "ROWSET")) {
-				debug("OFHStatement parser branch: XML ROWSET");
-				return buildXmlResultSet(xmlResult);
-			}
-
-			if (matchesNodeName(rootNode, "DATA_DS")) {
-				embeddedRowset = extractEmbeddedRowset(rootNode);
-				if (embeddedRowset != null) {
-					debug("OFHStatement parser branch: embedded XML ROWSET");
-					return buildXmlResultSet(parseXmlDocument(embeddedRowset));
-				}
-
-				if (isEmptyDataSet(rootNode)) {
-					debug("OFHStatement parser branch: empty DATA_DS result");
-					return emptyResultSet();
-				}
-			}
-
-			throw new SQLException("Unsupported XML payload root: " + rootName);
-		} catch (ParserConfigurationException | SAXException | IOException e) {
-			throw new SQLException("XML Result Parsing Error: " + e.getMessage(), e);
+		String embeddedRowset = extractEmbeddedRowsetFromPayload(xmlContent);
+		if (embeddedRowset != null) {
+			debug("OFHStatement parser branch: embedded XML ROWSET");
+			return buildXmlResultSetStax(embeddedRowset);
 		}
+
+		if (!xmlContent.contains("<ROW>")) {
+			debug("OFHStatement parser branch: empty XML result (no rows)");
+			return emptyResultSet();
+		}
+
+		debug("OFHStatement parser branch: direct XML parsing");
+		return buildXmlResultSetStax(xmlContent);
 	}
 
 	private String extractEmbeddedRowsetFromPayload(String xmlContent) {
@@ -269,75 +343,68 @@ public class OFHStatement implements Statement {
 		}
 	}
 
-	private Document parseXmlDocument(String xmlContent) throws ParserConfigurationException, IOException, SAXException {
-		DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-		DocumentBuilder builder = factory.newDocumentBuilder();
-		return builder.parse(new InputSource(new StringReader(xmlContent)));
-	}
-
-	private ResultSet buildXmlResultSet(Document xmlResult) {
-		NodeList rowNodes = xmlResult.getDocumentElement().getChildNodes();
+	private ResultSet buildXmlResultSetStax(String xmlContent) throws SQLException {
 		List<String> headers = new ArrayList<>();
 		LinkedHashSet<String> headerNames = new LinkedHashSet<>();
 		List<List<String>> rows = new ArrayList<>();
 
-		for (Node rowNode : iterable(rowNodes)) {
-			if (!matchesNodeName(rowNode, "ROW")) {
-				continue;
-			}
+		try {
+			XMLInputFactory factory = XMLInputFactory.newInstance();
+			XMLStreamReader reader = factory.createXMLStreamReader(new StringReader(xmlContent));
+			
+			boolean inRow = false;
+			String currentColumnName = null;
+			Map<String, String> rowValues = null;
+			StringBuilder currentValue = null;
 
-			Map<String, String> rowValues = new LinkedHashMap<>();
-			for (Node columnNode : iterable(rowNode.getChildNodes())) {
-				if (columnNode.getNodeType() != Node.ELEMENT_NODE) {
-					continue;
+			while (reader.hasNext()) {
+				int event = reader.next();
+				
+				if (event == XMLStreamConstants.START_ELEMENT) {
+					String localName = reader.getLocalName();
+					
+					if ("ROW".equals(localName)) {
+						inRow = true;
+						rowValues = new LinkedHashMap<>();
+					} else if (inRow) {
+						currentColumnName = localName;
+						currentValue = new StringBuilder();
+						if (headerNames.add(currentColumnName)) {
+							headers.add(currentColumnName);
+						}
+					}
+				} else if (event == XMLStreamConstants.CHARACTERS) {
+					if (inRow && currentColumnName != null) {
+						currentValue.append(reader.getText());
+					}
+				} else if (event == XMLStreamConstants.END_ELEMENT) {
+					String localName = reader.getLocalName();
+					
+					if ("ROW".equals(localName)) {
+						inRow = false;
+						List<String> row = new ArrayList<>(headers.size());
+						for (String header : headers) {
+							row.add(rowValues.get(header));
+						}
+						rows.add(row);
+						
+						if (maxRows > 0 && rows.size() >= maxRows) {
+							break;
+						}
+					} else if (inRow && currentColumnName != null && currentColumnName.equals(localName)) {
+						rowValues.put(currentColumnName, currentValue.toString());
+						currentColumnName = null;
+						currentValue = null;
+					}
 				}
-
-				String columnName = columnNode.getNodeName();
-				if (headerNames.add(columnName)) {
-					headers.add(columnName);
-				}
-				rowValues.put(columnName, columnNode.getTextContent());
 			}
-
-			List<String> row = new ArrayList<>();
-			for (String header : headers) {
-				row.add(rowValues.get(header));
-			}
-			rows.add(row);
+		} catch (XMLStreamException e) {
+			throw new SQLException("XML Result Parsing Error: " + e.getMessage(), e);
 		}
 
 		debug("OFHStatement XML ROWSET parsed rows: " + rows.size() + " columns: " + headers.size() + " headers: " + headers);
 
-		if (maxRows > 0 && rows.size() > maxRows) {
-			debug("OFHStatement applying maxRows to XML result: " + maxRows);
-			rows = new ArrayList<>(rows.subList(0, maxRows));
-		}
-
 		return new OFHResultSet(headers, rows);
-	}
-
-	private String extractEmbeddedRowset(Node node) {
-		if (node == null) {
-			return null;
-		}
-
-		String textContent = stripBom(node.getTextContent());
-		if (textContent != null) {
-			String unescapedText = unescapeXml(textContent).trim();
-			if (unescapedText.startsWith("<ROWSET") && unescapedText.endsWith("</ROWSET>")) {
-				debug("OFHStatement embedded ROWSET preview: " + preview(unescapedText));
-				return unescapedText;
-			}
-		}
-
-		for (Node childNode : iterable(node.getChildNodes())) {
-			String embeddedRowset = extractEmbeddedRowset(childNode);
-			if (embeddedRowset != null) {
-				return embeddedRowset;
-			}
-		}
-
-		return null;
 	}
 
 	private String unescapeXml(String value) {
@@ -359,32 +426,7 @@ public class OFHStatement implements Statement {
 		return value;
 	}
 
-	private boolean isEmptyDataSet(Node node) {
-		if (node == null || !matchesNodeName(node, "DATA_DS")) {
-			return false;
-		}
 
-		return !hasNestedElementWithText(node);
-	}
-
-	private boolean hasNestedElementWithText(Node node) {
-		for (Node childNode : iterable(node.getChildNodes())) {
-			if (childNode.getNodeType() != Node.ELEMENT_NODE) {
-				continue;
-			}
-
-			String textContent = stripBom(childNode.getTextContent());
-			if (textContent != null && !textContent.trim().isEmpty()) {
-				return true;
-			}
-
-			if (hasNestedElementWithText(childNode)) {
-				return true;
-			}
-		}
-
-		return false;
-	}
 
 	private ResultSet emptyResultSet() {
 		return new OFHResultSet(new ArrayList<>(), new ArrayList<>());
