@@ -71,6 +71,7 @@ public class FinancialsMetadata {
         public String product;
         public String release;
         public String sourceTocUrl;
+        public List<String> sourceTocUrls;
         public String generatedAt;
         public List<MetadataObject> objects;
     }

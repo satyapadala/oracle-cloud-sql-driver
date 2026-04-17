@@ -20,14 +20,20 @@ import org.jsoup.HttpStatusException;
 public class MetadataScraper {
 
     public static void main(String[] args) throws Exception {
-        String tocUrl = "https://docs.oracle.com/en/cloud/saas/financials/26b/oedmf/toc.htm";
+        List<String> tocUrls = new ArrayList<>();
         String release = "26B";
         String output = "src/main/resources/metadata/financials-latest.json";
 
         for (int i = 0; i < args.length; i++) {
-            if ("--toc-url".equals(args[i]) && i + 1 < args.length) tocUrl = args[++i];
+            if ("--toc-url".equals(args[i]) && i + 1 < args.length) tocUrls.add(args[++i]);
             else if ("--release".equals(args[i]) && i + 1 < args.length) release = args[++i];
             else if ("--output".equals(args[i]) && i + 1 < args.length) output = args[++i];
+        }
+
+        // Default to financials + common applications if no explicit TOC URLs provided
+        if (tocUrls.isEmpty()) {
+            tocUrls.add("https://docs.oracle.com/en/cloud/saas/financials/26b/oedmf/toc.htm");
+            tocUrls.add("https://docs.oracle.com/en/cloud/saas/applications-common/26b/oedma/toc.htm");
         }
 
         MetadataScraper scraper = new MetadataScraper(url -> {
@@ -48,7 +54,7 @@ public class MetadataScraper {
                 }
             }
         });
-        scraper.runScraper(tocUrl, release, output);
+        scraper.runScraper(tocUrls, release, output);
     }
 
     public interface DocumentFetcher {
@@ -62,14 +68,39 @@ public class MetadataScraper {
     }
 
     public void runScraper(String tocUrl, String release, String output) throws Exception {
-        System.out.println("Starting scraper with TOC: " + tocUrl);
-        
-        FinancialsMetadata.Snapshot snapshot = new FinancialsMetadata.Snapshot();
-        snapshot.product = "financials";
-        snapshot.release = release;
-        snapshot.sourceTocUrl = tocUrl;
-        snapshot.generatedAt = Instant.now().toString();
-        snapshot.objects = new ArrayList<>();
+        runScraper(Collections.singletonList(tocUrl), release, output);
+    }
+
+    public void runScraper(List<String> tocUrls, String release, String output) throws Exception {
+        FinancialsMetadata.Snapshot mergedSnapshot = new FinancialsMetadata.Snapshot();
+        mergedSnapshot.product = "oracle-fusion";
+        mergedSnapshot.release = release;
+        mergedSnapshot.sourceTocUrls = tocUrls;
+        mergedSnapshot.sourceTocUrl = tocUrls.get(0); // backward compat
+        mergedSnapshot.generatedAt = Instant.now().toString();
+        mergedSnapshot.objects = new ArrayList<>();
+
+        Map<String, FinancialsMetadata.MetadataObject> globalObjectMap = new HashMap<>();
+
+        for (String tocUrl : tocUrls) {
+            System.out.println("Starting scraper with TOC: " + tocUrl);
+            scrapeOneToc(tocUrl, globalObjectMap);
+        }
+
+        mergedSnapshot.objects.addAll(globalObjectMap.values());
+        mergedSnapshot.objects.sort(Comparator.comparing(o -> o.name));
+
+        File outFile = new File(output);
+        outFile.getParentFile().mkdirs();
+
+        ObjectMapper mapper = new ObjectMapper();
+        mapper.enable(SerializationFeature.INDENT_OUTPUT);
+        mapper.writeValue(outFile, mergedSnapshot);
+
+        System.out.println("Scraping completed. Generated " + outFile.getAbsolutePath());
+    }
+
+    private void scrapeOneToc(String tocUrl, Map<String, FinancialsMetadata.MetadataObject> globalObjectMap) throws Exception {
 
         Document tocDoc;
         try {
@@ -80,16 +111,15 @@ public class MetadataScraper {
         }
 
         URI baseUri = new URI(tocUrl);
-
         Elements links = tocDoc.select("a[href]");
-        Map<String, FinancialsMetadata.MetadataObject> objectMap = new HashMap<>();
+        Map<String, FinancialsMetadata.MetadataObject> localObjectMap = new HashMap<>();
 
         for (Element link : links) {
             String href = link.attr("href");
             String text = link.text().trim();
-            
+
             if (text.matches("^[A-Z0-9_]+$") && text.length() > 2) {
-                if (!objectMap.containsKey(text)) {
+                if (!localObjectMap.containsKey(text) && !globalObjectMap.containsKey(text)) {
                     FinancialsMetadata.MetadataObject obj = new FinancialsMetadata.MetadataObject();
                     obj.name = text;
                     try {
@@ -97,50 +127,42 @@ public class MetadataScraper {
                     } catch (Exception e) {
                         obj.docPath = href;
                     }
-                    obj.type = text.endsWith("_V") ? "VIEW" : "TABLE";
+                    obj.type = text.endsWith("_V") || text.endsWith("_VL") ? "VIEW" : "TABLE";
                     obj.module = extractModule(link);
-                    objectMap.put(text, obj);
+                    localObjectMap.put(text, obj);
                 }
             }
         }
 
-        int total = objectMap.size();
+        int total = localObjectMap.size();
         AtomicInteger count = new AtomicInteger(0);
         ExecutorService executor = Executors.newFixedThreadPool(8);
         List<FinancialsMetadata.MetadataObject> syncObjects = Collections.synchronizedList(new ArrayList<>());
-        
-        for (FinancialsMetadata.MetadataObject obj : objectMap.values()) {
-             executor.submit(() -> {
-                 try {
+
+        for (FinancialsMetadata.MetadataObject obj : localObjectMap.values()) {
+            executor.submit(() -> {
+                try {
                     int current = count.incrementAndGet();
                     if (current % 50 == 0 || current == 1 || current == total) {
                         System.out.println("Fetching: " + obj.name + " (" + current + "/" + total + ")");
                     }
                     Document doc = fetcher.fetch(obj.docPath);
                     parseObjectPage(doc, obj);
-                 } catch(Exception e) {
-                     System.err.println("Failed to fetch/parse " + obj.docPath + ": " + e.getMessage());
-                     obj.columns = new ArrayList<>();
-                     obj.primaryKeys = new ArrayList<>();
-                 }
-                 syncObjects.add(obj);
-             });
+                } catch (Exception e) {
+                    System.err.println("Failed to fetch/parse " + obj.docPath + ": " + e.getMessage());
+                    obj.columns = new ArrayList<>();
+                    obj.primaryKeys = new ArrayList<>();
+                }
+                syncObjects.add(obj);
+            });
         }
-        
+
         executor.shutdown();
         executor.awaitTermination(2, TimeUnit.HOURS);
-        
-        snapshot.objects.addAll(syncObjects);
-        snapshot.objects.sort(Comparator.comparing(o -> o.name));
-        
-        File outFile = new File(output);
-        outFile.getParentFile().mkdirs();
-        
-        ObjectMapper mapper = new ObjectMapper();
-        mapper.enable(SerializationFeature.INDENT_OUTPUT);
-        mapper.writeValue(outFile, snapshot);
-        
-        System.out.println("Scraping completed. Generated " + outFile.getAbsolutePath());
+
+        for (FinancialsMetadata.MetadataObject obj : syncObjects) {
+            globalObjectMap.put(obj.name, obj);
+        }
     }
 
     private String extractModule(Element link) {
