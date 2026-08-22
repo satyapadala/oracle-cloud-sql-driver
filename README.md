@@ -53,9 +53,18 @@ When configuring your connection, the driver exposes several custom properties t
 
 | Property | Default Value | Description |
 | :--- | :--- | :--- |
-| **`safetyGuard`** | `true` | **Recommended:** Blocks the execution of massive "blind" SQL queries that do not contain a `WHERE` clause, `ROWNUM` limiter, or `FETCH FIRST` statement. This prevents accidental memory exhaustion of the Oracle Cloud environment and your local JVM. Set to `false` to bypass. |
+| **`safetyGuard`** | `true` | **Recommended:** Blocks the execution of massive "blind" SQL queries that do not contain a `WHERE` clause, `ROWNUM` limiter, or `FETCH FIRST` statement. This prevents accidental memory exhaustion of the Oracle Cloud environment and your local JVM. Set to `false` to bypass. **Note:** If `fetchSize` is set (e.g., via DBeaver's result set fetch size), the driver automatically injects a `FETCH FIRST N ROWS ONLY` clause, which satisfies the safety guard. |
 | **`debug`** | `false` | Enables verbose diagnostic logging in the IDE console output. Useful for troubleshooting connection, parser, and schema extraction issues. |
 | **`reportPath`** | `/Custom/OracleCloudSQLQuery/SQLQuery.xdo` | The absolute path to the uploaded Oracle BI Publisher Custom Report Data Model. |
+
+### Fetch Size & Server-Side Row Limiting
+
+The driver honors the JDBC `Statement.setFetchSize(n)` hint (commonly set by tools like DBeaver via the "Result Set Fetch Size" setting). When `fetchSize` is set to a positive value:
+
+- The driver wraps the query as `SELECT * FROM (<original_sql>) FETCH FIRST n ROWS ONLY` before sending it to Oracle Cloud, reducing network transfer and memory usage.
+- Queries that already contain `ROWNUM` or `FETCH FIRST` are **not** double-wrapped — the user's explicit limit is respected.
+- Trivial `FROM DUAL` queries are skipped (they return at most 1 row).
+- If both `fetchSize` and `maxRows` are set, the smaller value is used.
 
 ---
 

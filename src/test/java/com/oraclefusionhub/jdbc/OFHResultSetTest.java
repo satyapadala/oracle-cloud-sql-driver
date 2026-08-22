@@ -103,4 +103,55 @@ public class OFHResultSetTest {
         assertEquals(String.class.getName(), rs.getMetaData().getColumnClassName(1));
     }
 
+    @Test
+    public void testRowsConsumedCountsNextCalls() throws SQLException {
+        OFHResultSet rs = new OFHResultSet(
+                Arrays.asList("A", "B"),
+                Arrays.asList(
+                        Arrays.asList("a1", "b1"),
+                        Arrays.asList("a2", "b2"),
+                        Arrays.asList("a3", "b3")
+                )
+        );
+
+        assertEquals(0, rs.getRowsConsumed());
+        rs.next();
+        assertEquals(1, rs.getRowsConsumed());
+        rs.next();
+        assertEquals(2, rs.getRowsConsumed());
+        rs.next();
+        assertEquals(3, rs.getRowsConsumed());
+        assertFalse(rs.next());
+        assertEquals(3, rs.getRowsConsumed());
+    }
+
+    @Test
+    public void testRowsConsumedEmptyResultSet() throws SQLException {
+        OFHResultSet rs = new OFHResultSet(
+                Collections.emptyList(),
+                Collections.emptyList()
+        );
+
+        assertEquals(0, rs.getRowsConsumed());
+        assertFalse(rs.next());
+        assertEquals(0, rs.getRowsConsumed());
+    }
+
+    @Test
+    public void testRowsConsumedSurvivesClose() throws SQLException {
+        OFHResultSet rs = new OFHResultSet(
+                Collections.singletonList("A"),
+                Arrays.asList(
+                        Arrays.asList("a1"),
+                        Arrays.asList("a2")
+                )
+        );
+
+        rs.next();
+        rs.next();
+        assertEquals(2, rs.getRowsConsumed());
+        rs.close();
+        assertEquals(2, rs.getRowsConsumed());
+    }
+
 }
