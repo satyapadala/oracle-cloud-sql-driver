@@ -32,10 +32,10 @@ public class MetadataScraper {
 
         // Default to financials + common applications if no explicit TOC URLs provided
         if (tocUrls.isEmpty()) {
-            tocUrls.add("https://docs.oracle.com/en/cloud/saas/financials/26b/oedmf/toc.htm");
-            tocUrls.add("https://docs.oracle.com/en/cloud/saas/applications-common/26b/oedma/toc.htm");
-            tocUrls.add("https://docs.oracle.com/en/cloud/saas/supply-chain-and-manufacturing/26b/oedsc/toc.htm");
-            tocUrls.add("https://docs.oracle.com/en/cloud/saas/human-resources/26b/oedmh/toc.htm");
+            tocUrls.add("https://docs.oracle.com/en/cloud/saas/financials/26c/oedmf/toc.htm");
+            tocUrls.add("https://docs.oracle.com/en/cloud/saas/applications-common/26c/oedma/toc.htm");
+            tocUrls.add("https://docs.oracle.com/en/cloud/saas/supply-chain-and-manufacturing/26c/oedsc/toc.htm");
+            tocUrls.add("https://docs.oracle.com/en/cloud/saas/human-resources/26c/oedmh/toc.htm");
         }
 
         MetadataScraper scraper = new MetadataScraper(url -> {
