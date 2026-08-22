@@ -35,8 +35,8 @@ jobs:
       with:
         name: OFHSqlDriver
         path: |
-          target/*.jar
-          !target/original-*.jar
+          driver/target/*-shaded.jar
+          mcp-server/target/*-shaded.jar
 
     # Optional: Uploads the full dependency graph to GitHub to improve the quality of Dependabot alerts this repository can receive
     - name: Update dependency graph
