@@ -22,10 +22,10 @@ jobs:
           ref: ${{ github.event.pull_request.merge_commit_sha }}
           fetch-depth: 0
 
-      - name: Set up JDK 11
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          java-version: '11'
+          java-version: '17'
           distribution: 'temurin'
           cache: maven
 
@@ -55,8 +55,10 @@ jobs:
           rm -rf releaseArtifcats
           mkdir -p releaseArtifcats/OracleBICatalog
           mkdir -p releaseArtifcats/OFHSqlDriver_jar
+          mkdir -p releaseArtifcats/OFHMcpServer_jar
           cp out/artifacts/OracleBICatalog/OracleCloudSQLQuery.catalog releaseArtifcats/OracleBICatalog/
-          cp target/OFHSqlDriver-*.jar releaseArtifcats/OFHSqlDriver_jar/
+          cp driver/target/*-shaded.jar releaseArtifcats/OFHSqlDriver_jar/
+          cp mcp-server/target/*-shaded.jar releaseArtifcats/OFHMcpServer_jar/
           zip -r "${{ steps.release_meta.outputs.asset }}" releaseArtifcats
 
       - name: Create GitHub release

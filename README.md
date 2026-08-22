@@ -1,14 +1,20 @@
-# Oracle Cloud SQL Driver
+# Oracle Cloud ERP/HCM SQL Driver & MCP Server
 
-A lightweight, robust JDBC driver designed explicitly to securely execute SQL queries against Oracle Cloud ERP / HCM environments without direct database-tier access. 
+A lightweight, robust JDBC driver and MCP (Model Context Protocol) server that securely executes SQL queries against Oracle Cloud ERP / HCM environments without direct database-tier access. Use the JDBC driver with any standard database IDE (DBeaver, DbVisualizer, DataGrip), or use the MCP server to give AI assistants like Claude direct, read-only query access to your Oracle Cloud data.
 
 ## 🚀 Key Features
 https://github.com/user-attachments/assets/4afdc1b8-6ed8-4239-b795-92291a52ef03
 
+### JDBC Driver
 * **Seamless JDBC Integration:** Run native SQL via any standard Java database querying tool. The driver seamlessly connects to your Oracle Cloud instance and effortlessly processes the complex data responses into standard JDBC `ResultSet` outputs.
 * **Offline Schema Metastore:** Comes bundled with a comprehensive metadata snapshot mapping over 4,000+ Oracle Financials Tables, Views, Columns, Primary Keys, and Descriptions natively to the JDBC Driver.
 * **IDE Autosuggestions:** Because of the bundled metastore, tools like DBeaver, DataGrip, or DbVisualizer will offer lightning-fast, highly accurate intellisense and schema autosuggestions—without ever burning an API call to Oracle.
-* **Robust Error Handling:** Natively unpacks Oracle Cloud exceptions and HTTP errors, throwing clean, readable `SQLExceptions` that explicitly outline syntax errors or column type mismatches directly in your IDE.-
+* **Robust Error Handling:** Natively unpacks Oracle Cloud exceptions and HTTP errors, throwing clean, readable `SQLExceptions` that explicitly outline syntax errors or column type mismatches directly in your IDE.
+
+### MCP Server
+* **AI Assistant Integration:** Exposes the driver's query capabilities over the Model Context Protocol (MCP) so AI assistants like Claude can run read-only SQL queries against your Oracle Cloud ERP/HCM data.
+* **Schema-Aware Tools:** AI assistants can introspect table schemas and execute SELECT queries through two MCP tools: `get_table_schema` and `execute_sql`.
+* **Safety Guard Built-In:** The same safety guard that protects the JDBC driver applies to MCP queries, preventing blind full-table scans.
 
 ## 🛠️ Installation & Setup
 
@@ -25,7 +31,7 @@ https://github.com/user-attachments/assets/4afdc1b8-6ed8-4239-b795-92291a52ef03
 - Go to `Tools` -> `Driver Manager`, click the `+` button and create a new **Custom Driver**.
 - **Name:** `Oracle Cloud SQL Driver`
 - **URL Format:** `jdbc:ofh://${Server}`
-- Under the `Driver artifacts and jar files` section, click `Add files` and select the `OFHSqlDriver-1.0-SNAPSHOT-shaded.jar`.
+- Under the `Driver artifacts and jar files` section, click `Add files` and select the `OFHSqlDriver-driver-1.0-SNAPSHOT-shaded.jar` from the `OFHSqlDriver_jar` folder in the release zip.
 - Close the Driver Manager and create a new database connection:
   - **Database Server:** `https://xxx.xxx.us2.oracle.com` (Your Oracle Cloud environment URL).
   - **Authentication:** Use a valid BI User username and password.
@@ -38,12 +44,40 @@ https://github.com/user-attachments/assets/4afdc1b8-6ed8-4239-b795-92291a52ef03
   - **Driver Name:** `Oracle Cloud SQL Driver`
   - **Class Name:** `com.oraclefusionhub.jdbc.OFHDriver`
   - **URL Template:** `jdbc:ofh://{host}`
-- In the **Libraries** tab, click **Add File** and select the `OFHSqlDriver-1.0-SNAPSHOT-shaded.jar`.
+- In the **Libraries** tab, click **Add File** and select the `OFHSqlDriver-driver-1.0-SNAPSHOT-shaded.jar` from the `OFHSqlDriver_jar` folder in the release zip.
 - Click **OK** to save the driver.
 - Click **New Database Connection**, search for your new `Oracle Cloud SQL Driver`, and click Next.
 - **Host:** `https://xxx.xxx.us2.oracle.com` (Your Oracle Cloud environment URL).
 - **Username / Password:** Your valid BI User credentials.
 - Click **Finish** and open a new SQL Script to start querying!
+
+#### Option C: MCP Server (AI Assistants like Claude)
+- Download the release zip from the [Releases Page](https://github.com/satyapadala/oracle-cloud-sql-driver/releases) and extract it.
+- Locate `OFHMcpServer-1.0-SNAPSHOT-shaded.jar` in the `OFHMcpServer_jar` folder.
+- Configure your AI assistant's MCP client (e.g., Claude Desktop's `claude_desktop_config.json`) with a stdio server entry:
+
+```json
+{
+  "mcpServers": {
+    "oracle-cloud-erp": {
+      "command": "java",
+      "args": ["-jar", "/path/to/OFHMcpServer-1.0-SNAPSHOT-shaded.jar"],
+      "env": {
+        "JDBC_URL": "jdbc:ofh://https://xxx.xxx.us2.oracle.com",
+        "JDBC_USER": "your_bi_username",
+        "JDBC_PASSWORD": "your_bi_password",
+        "JDBC_SAFETY_GUARD": "true",
+        "JDBC_DEBUG": "false"
+      }
+    }
+  }
+}
+```
+
+- Restart your AI assistant. It will now have two tools available:
+  - **`execute_sql`** — Run read-only SELECT or WITH (CTE) queries. Results are returned as JSON (max 100 rows).
+  - **`get_table_schema`** — Fetch column names, types, nullability, comments, and primary keys for any table or view using the bundled offline metastore (no API calls to Oracle).
+- Both tools are protected by the driver's safety guard, which rejects queries without `WHERE` clauses or row limiters.
 
 ---
 

@@ -88,13 +88,15 @@ public class OFHStatement implements Statement {
 
 		HttpURLConnection conn;
 		try {
-			conn = (HttpURLConnection) this.serviceUrl.openConnection();
-			conn.setRequestMethod("POST");
-			conn.setRequestProperty("SOAPAction", "runReport");
-			conn.setRequestProperty("Content-Type", "application/soap+xml");
-			conn.setRequestProperty("Authorization", this.basicAuth);
-			conn.setDoOutput(true);
-			conn.setRequestProperty("Accept-Encoding", "gzip");
+		conn = (HttpURLConnection) this.serviceUrl.openConnection();
+		conn.setRequestMethod("POST");
+		conn.setRequestProperty("SOAPAction", "runReport");
+		conn.setRequestProperty("Content-Type", "application/soap+xml");
+		conn.setRequestProperty("Authorization", this.basicAuth);
+		conn.setDoOutput(true);
+		conn.setRequestProperty("Accept-Encoding", "gzip");
+		conn.setConnectTimeout(30000);
+		conn.setReadTimeout(120000);
 		} catch (IOException e) {
 			throw new SQLException("Error opening HTTP connection: " + e.getMessage(), e);
 		}
