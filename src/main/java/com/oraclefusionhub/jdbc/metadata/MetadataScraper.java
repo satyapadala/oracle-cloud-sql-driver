@@ -34,6 +34,8 @@ public class MetadataScraper {
         if (tocUrls.isEmpty()) {
             tocUrls.add("https://docs.oracle.com/en/cloud/saas/financials/26b/oedmf/toc.htm");
             tocUrls.add("https://docs.oracle.com/en/cloud/saas/applications-common/26b/oedma/toc.htm");
+            tocUrls.add("https://docs.oracle.com/en/cloud/saas/supply-chain-and-manufacturing/26b/oedsc/toc.htm");
+            tocUrls.add("https://docs.oracle.com/en/cloud/saas/human-resources/26b/oedmh/toc.htm");
         }
 
         MetadataScraper scraper = new MetadataScraper(url -> {

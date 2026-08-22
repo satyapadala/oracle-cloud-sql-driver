@@ -16,6 +16,7 @@ import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
 import java.io.*;
 import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.sql.*;
 import java.text.MessageFormat;
@@ -32,16 +33,22 @@ import java.util.zip.GZIPInputStream;
 import org.apache.commons.csv.CSVRecord;
 
 public class OFHStatement implements Statement {
-	private final HttpURLConnection httpURLConnection;
+	private final OFHConnection connection;
+	private final URL serviceUrl;
+	private final String basicAuth;
 	private final String payload;
 	private final boolean debugEnabled;
 	private final boolean safetyGuardEnabled;
 	private ResultSet rs;
 	private final String reportPath;
 	private int maxRows = 0;
+	private int fetchSize = 0;
+	private HttpURLConnection currentConnection = null;
 
-	OFHStatement(HttpURLConnection connection, String reportPath, boolean debugEnabled, boolean safetyGuardEnabled) {
-		this.httpURLConnection = connection;
+	OFHStatement(OFHConnection connection, URL serviceUrl, String basicAuth, String reportPath, boolean debugEnabled, boolean safetyGuardEnabled) {
+		this.connection = connection;
+		this.serviceUrl = serviceUrl;
+		this.basicAuth = basicAuth;
 		this.reportPath = reportPath;
 		this.debugEnabled = debugEnabled;
 		this.safetyGuardEnabled = safetyGuardEnabled;
@@ -70,15 +77,28 @@ public class OFHStatement implements Statement {
 
 	@Override
 	public ResultSet executeQuery(String s) throws SQLException {
-		checkQuerySafetyGuard(s);
-		debug("OFHStatement.executeQuery SQL: " + s);
-		String query = encodeXML(s);
+		int currentOffset = connection.getAndUpdateOffset(s);
+
+		String rewrittenSql = applyFetchSizeLimit(s, currentOffset);
+		checkQuerySafetyGuard(rewrittenSql);
+		debug("OFHStatement.executeQuery SQL: " + rewrittenSql);
+		String query = encodeXML(rewrittenSql);
 		Object[] params = new Object[] { query, this.reportPath };
 		String finalPayload = MessageFormat.format(this.payload, params);
 
-		HttpURLConnection conn = this.httpURLConnection;
-		conn.setDoOutput(true);
-		conn.setRequestProperty("Accept-Encoding", "gzip");
+		HttpURLConnection conn;
+		try {
+			conn = (HttpURLConnection) this.serviceUrl.openConnection();
+			conn.setRequestMethod("POST");
+			conn.setRequestProperty("SOAPAction", "runReport");
+			conn.setRequestProperty("Content-Type", "application/soap+xml");
+			conn.setRequestProperty("Authorization", this.basicAuth);
+			conn.setDoOutput(true);
+			conn.setRequestProperty("Accept-Encoding", "gzip");
+		} catch (IOException e) {
+			throw new SQLException("Error opening HTTP connection: " + e.getMessage(), e);
+		}
+		this.currentConnection = conn;
 		OutputStream os = null;
 		int responseCode = 0;
 		try {
@@ -138,8 +158,59 @@ public class OFHStatement implements Statement {
 		String decodedContent = new String(decodedBytes, StandardCharsets.UTF_8);
 		debug("OFHStatement decoded payload preview: " + preview(decodedContent));
 		
-		return buildResultSet(decodedContent);
+		OFHResultSet ofhResultSet = (OFHResultSet) buildResultSet(decodedContent);
+		connection.setLastResultSet(ofhResultSet);
+		return ofhResultSet;
 
+	}
+
+	private String applyFetchSizeLimit(String sql, int offset) {
+		if (sql == null || sql.trim().isEmpty()) {
+			return sql;
+		}
+
+		int effectiveLimit = computeEffectiveRowLimit();
+		if (effectiveLimit <= 0) {
+			return sql;
+		}
+
+		String trimmed = sql.trim();
+		String upper = trimmed.toUpperCase();
+
+		if (!upper.startsWith("SELECT") && !upper.startsWith("WITH")) {
+			return sql;
+		}
+
+		if (upper.contains("FETCH FIRST") || upper.contains("ROWNUM") || upper.contains("OFFSET")) {
+			debug("OFHStatement skipping fetchSize rewrite: query already contains a row limiter or offset");
+			return sql;
+		}
+
+		if (upper.contains(" FROM DUAL") || upper.contains(" FROM SYS.DUAL")) {
+			return sql;
+		}
+
+		String suffix;
+		if (offset > 0) {
+			suffix = " OFFSET " + offset + " ROWS FETCH NEXT " + effectiveLimit + " ROWS ONLY";
+		} else {
+			suffix = " FETCH FIRST " + effectiveLimit + " ROWS ONLY";
+		}
+
+		String rewritten = "SELECT * FROM (" + trimmed + ")" + suffix;
+		debug("OFHStatement applied fetchSize rewrite (offset=" + offset + ", limit=" + effectiveLimit + " rows): " + rewritten);
+		return rewritten;
+	}
+
+	private int computeEffectiveRowLimit() {
+		if (fetchSize > 0 && maxRows > 0) {
+			return Math.min(fetchSize, maxRows);
+		} else if (fetchSize > 0) {
+			return fetchSize;
+		} else if (maxRows > 0) {
+			return maxRows;
+		}
+		return 0;
 	}
 
 	private void checkQuerySafetyGuard(String sql) throws SQLException {
@@ -162,6 +233,8 @@ public class OFHStatement implements Statement {
 		if (!upper.contains("WHERE") && 
 			!upper.contains("ROWNUM") && 
 			!upper.contains("FETCH FIRST") && 
+			!upper.contains("FETCH NEXT") &&
+			!upper.contains("OFFSET") &&
 			!upper.contains("LIMIT")) {
 			throw new SQLException("Safety Guard: Refusing to execute a massive blind query. " +
 					"Please explicitly include a 'WHERE' clause, 'ROWNUM' limiter, or 'FETCH FIRST x ROWS ONLY' " +
@@ -344,13 +417,14 @@ public class OFHStatement implements Statement {
 	}
 
 	private ResultSet buildXmlResultSetStax(String xmlContent) throws SQLException {
+		String sanitizedXml = sanitizeXmlAmpersands(xmlContent);
 		List<String> headers = new ArrayList<>();
 		LinkedHashSet<String> headerNames = new LinkedHashSet<>();
 		List<List<String>> rows = new ArrayList<>();
 
 		try {
 			XMLInputFactory factory = XMLInputFactory.newInstance();
-			XMLStreamReader reader = factory.createXMLStreamReader(new StringReader(xmlContent));
+			XMLStreamReader reader = factory.createXMLStreamReader(new StringReader(sanitizedXml));
 			
 			boolean inRow = false;
 			String currentColumnName = null;
@@ -414,6 +488,44 @@ public class OFHStatement implements Statement {
 				.replace("&quot;", "\"")
 				.replace("&apos;", "'")
 				.replace("&amp;", "&");
+	}
+
+	private String sanitizeXmlAmpersands(String xml) {
+		if (xml == null || xml.isEmpty()) {
+			return xml;
+		}
+
+		StringBuilder sb = new StringBuilder(xml.length());
+		int i = 0;
+		while (i < xml.length()) {
+			char c = xml.charAt(i);
+			if (c == '&') {
+				int semicolon = xml.indexOf(';', i);
+				if (semicolon > i && semicolon - i <= 10) {
+					String entity = xml.substring(i, semicolon + 1);
+					if (isValidXmlEntity(entity)) {
+						sb.append(entity);
+						i = semicolon + 1;
+						continue;
+					}
+				}
+				sb.append("&amp;");
+				i++;
+			} else {
+				sb.append(c);
+				i++;
+			}
+		}
+		return sb.toString();
+	}
+
+	private boolean isValidXmlEntity(String entity) {
+		if (entity.equals("&amp;") || entity.equals("&lt;") ||
+			entity.equals("&gt;") || entity.equals("&quot;") ||
+			entity.equals("&apos;")) {
+			return true;
+		}
+		return entity.length() > 2 && entity.charAt(1) == '#';
 	}
 
 	private String stripBom(String value) {
@@ -662,9 +774,9 @@ public class OFHStatement implements Statement {
 
 	@Override
 	public void close() throws SQLException {
-		if (this.httpURLConnection != null) {
+		if (this.currentConnection != null) {
 			try {
-				httpURLConnection.disconnect();
+				currentConnection.disconnect();
 			} catch (Exception ignore) {
 			}
 		}
@@ -762,12 +874,15 @@ public class OFHStatement implements Statement {
 
 	@Override
 	public void setFetchSize(int i) throws SQLException {
-
+		if (i < 0) {
+			throw new SQLException("fetchSize cannot be negative");
+		}
+		this.fetchSize = i;
 	}
 
 	@Override
 	public int getFetchSize() throws SQLException {
-		return 0;
+		return this.fetchSize;
 	}
 
 	@Override
@@ -797,7 +912,7 @@ public class OFHStatement implements Statement {
 
 	@Override
 	public Connection getConnection() throws SQLException {
-		return null;
+		return this.connection;
 	}
 
 	@Override

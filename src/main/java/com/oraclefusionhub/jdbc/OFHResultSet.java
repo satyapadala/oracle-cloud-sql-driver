@@ -32,6 +32,8 @@ public class OFHResultSet implements ResultSet {
 	private List<String> record = null;
 	private boolean closed = false;
 	private boolean lastWasNull = false;
+	private int fetchSize = 0;
+	private int rowsConsumed = 0;
 
 	public OFHResultSet(Iterable<CSVRecord> s) {
 		Iterator<CSVRecord> iterator = s.iterator();
@@ -70,12 +72,17 @@ public class OFHResultSet implements ResultSet {
 		if (currentRowIndex + 1 < rows.size()) {
 			currentRowIndex++;
 			record = rows.get(currentRowIndex);
+			rowsConsumed++;
 			return true;
 		}
 		record = null;
 		currentRowIndex = rows.size();
 		lastWasNull = false;
 		return false;
+	}
+
+	public int getRowsConsumed() {
+		return rowsConsumed;
 	}
 
 	@Override
@@ -570,12 +577,15 @@ public class OFHResultSet implements ResultSet {
 
 	@Override
 	public void setFetchSize(int i) throws SQLException {
-
+		if (i < 0) {
+			throw new SQLException("fetchSize cannot be negative");
+		}
+		this.fetchSize = i;
 	}
 
 	@Override
 	public int getFetchSize() throws SQLException {
-		return 0;
+		return this.fetchSize;
 	}
 
 	@Override

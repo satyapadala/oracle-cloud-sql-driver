@@ -1,7 +1,5 @@
 package com.oraclefusionhub.jdbc;
 
-import java.io.IOException;
-import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -18,6 +16,9 @@ public class OFHConnection implements java.sql.Connection {
 	private Boolean closed;
 	private final boolean debugEnabled;
 	private final boolean safetyGuardEnabled;
+	private int currentOffset = 0;
+	private String lastSql = null;
+	private OFHResultSet lastResultSet = null;
 
 	public OFHConnection(String url, Properties properties) throws SQLException {
 
@@ -63,19 +64,21 @@ public class OFHConnection implements java.sql.Connection {
 			throw new SQLException("invalid URL: " + fullURL);
 		}
 
-		HttpURLConnection conn;
-		try {
-			conn = (HttpURLConnection) url.openConnection();
-			conn.setRequestMethod("POST");
-		} catch (IOException e) {
-			throw new SQLException("error while opening connection: " + e.getStackTrace());
-		}
+		return new OFHStatement(this, url, this.basicAuth, reportPath, debugEnabled, safetyGuardEnabled);
+	}
 
-		conn.setRequestProperty("SOAPAction", "runReport");
-		conn.setRequestProperty("Content-Type", "application/soap+xml");
-		conn.setRequestProperty("SOAPAction", "runReport");
-		conn.setRequestProperty("Authorization", this.basicAuth);
-		return new OFHStatement(conn, reportPath, debugEnabled, safetyGuardEnabled);
+	synchronized int getAndUpdateOffset(String sql) {
+		if (lastSql != null && !sql.trim().equalsIgnoreCase(lastSql.trim())) {
+			currentOffset = 0;
+		} else if (lastResultSet != null) {
+			currentOffset += lastResultSet.getRowsConsumed();
+		}
+		lastSql = sql;
+		return currentOffset;
+	}
+
+	synchronized void setLastResultSet(OFHResultSet rs) {
+		lastResultSet = rs;
 	}
 
 	@Override
